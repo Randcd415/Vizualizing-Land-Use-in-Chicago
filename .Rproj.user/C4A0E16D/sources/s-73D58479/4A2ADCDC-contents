@@ -1,0 +1,145 @@
+---
+title: "pset_4"
+author: "Student ID: 12173883"
+date: "November 3, 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(haven)
+library(Synth)
+library(MSCMT)
+library(microsynth)
+library(tidyverse)
+data <- read_dta("soda_tax_long_data.dta")
+
+data$year <- 1960 + data$date %/% 12
+data$month <- data$date %% 12 + 1
+data$month <- sprintf("%02d", data$month)
+data$real_date <- paste(data$year, data$month, sep = "-")
+data$real_date2 <- as.Date(paste(data$real_date, "01", sep = "-"))
+
+data2 <- as.data.frame(data) %>% select(c("product", "rprice", "prdname", "real_date"))
+
+data3 <- as.data.frame(data) %>% select(c("product", "rprice", "prdname", "date"))
+```
+
+### Question 1
+
+There are 136 unique products
+
+Product value 1 corresponds with regular sodas
+
+There are 54 different time periods
+
+The dates in this dataset are formatted as months since Jan 1960, so Jan 2014 is 648
+```{r Q1}
+#number of unique product ids
+data$product %>% unique() %>% length()
+
+#unique value for regular soda
+data$product[data$prdname=="regsodasndx"] %>% unique()
+
+#number of unique time periods
+data$real_date2 %>% unique() %>% length
+```
+
+### Question 2
+
+This figure below looks very similar to the corresponding time series graph (figure 2) in Grogger(2017)
+```{r Q2}
+filtered_data <- filter(data, product == 1)
+ggplot(filtered_data, aes(x = real_date2, y = rprice)) +
+  geom_line() +
+  ggtitle("Price of Soda in Mexico") +
+  xlab("Date") +
+  ylab("Price") +
+  theme_classic()
+```
+
+
+### Question 3
+
+CHECK: We are using other products as our pool?
+
+
+```{r Q3}
+#create list of matrices to be loaded into synth
+
+#create vector of controls, all product names except regular soda
+controls = unique(data$product)[unique(data$product) != 1] 
+controls_names = unique(data$prdname)[unique(data$prdname) != "regsodasndx"]
+#for some reason if I don't do this the code fails
+data <- as.data.frame(data)
+
+dataprep.out <- dataprep(foo = data,  #specify dataframe
+                   predictors = "rprice", #only predictor is the price
+                   dependent = "rprice", #price is also dependent variable
+                   unit.variable = "product", #product differentiates treat from control
+                   time.variable = "date", #time variable is date
+                   treatment.identifier = 1, #dependent var product num
+                   controls.identifier = controls, #all controls
+                   time.predictors.prior = 612:646, #time to match on
+                   time.optimize.ssr = 612:647, #time to optimize loss func
+                   time.plot = 612:665,
+                   unit.names.variable = "prdname"
+                   )
+
+synth.out <- synth(dataprep.out)
+```
+
+
+```{r}
+path.plot(dataprep.res = dataprep.out,synth.res = synth.out,
+          Ylab = "Price",
+          Xlab = "Months since Jan 1960",
+          Ylim = c(95, 120),
+          Legend = c("Regular Soda", "Synthetic Regular Soda"))
+#gaps.plot(dataprep.res = dataprep.out,synth.res = synth.out)
+```
+
+
+```{r Q3.1}
+data2 <- as.data.frame(data) %>% select(c("product", "rprice", "prdname", "real_date"))
+
+make_mat <- function(x){
+  cbind(x = c("2011-01", "2013-11"))
+}
+
+mscmt.prep <- listFromLong(data2,
+                           unit.variable = "product",
+                           time.variable = "real_date",
+                           unit.names.variable = "prdname")
+
+
+treatment.identifier = "regsodasndx"
+
+mscmt.out <- mscmt(mscmt.prep,
+                   treatment.identifier,
+                   controls.identifier = controls_names,
+                   times.dep = cbind("regsodasndx" = c("2011-01", "2013-11")),
+                   times.pred = mat,
+                   agg.fns = rep("mean", ncol(mat)),
+                   seed = 1
+                   )
+
+```
+
+```{r}
+data3$treat <- ifelse(data3$product == 1 & data3$date > 647, 1, 0)
+
+test <-microsynth(data = data3,
+           idvar = "product",
+           intvar = "treat",
+           timevar = "date",
+           result.var = "rprice",
+           perm = 10,
+           match.covar = "product",
+           start.pre = 612,
+           end.pre = 646,
+           end.post = 648:665)
+```
+

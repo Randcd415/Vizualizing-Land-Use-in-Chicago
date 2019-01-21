@@ -1,0 +1,205 @@
+---
+title: "tract_disaster"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rgdal)
+library(sp)
+library(sf)
+library(maptools)
+library(shapefiles)
+library(gdalUtils)
+library(graphics)
+library(rgeos)
+library(tidyverse)
+```
+
+## R Markdown
+
+
+```{r}
+#set directories
+dir = "C:/Users/7450/Documents/Harris MPP/Q4/Large Scale Data Methods/final_project"
+dir_tract = paste0(dir, "/data/shp_files/tracts")
+dir_sandy_points = paste0(dir, "/data/shp_files/Sandy/al182012_best_track")
+dir_irene_points = paste0(dir, "/data/shp_files/Irene/al092011_best_track")
+
+#read in census tracts and hurrican path points
+tracts <- readOGR(dsn = dir_tract, layer = "us_tracts")
+sandy_points <- readOGR(dsn = dir_sandy_points, layer = "Data-point")
+irene_points <- readOGR(dsn = dir_irene_points, layer = "Data-point")
+
+```
+
+
+```{r}
+#ensure two shpfiles share projections
+proj4string(sandy_points)
+proj4string(irene_points)
+proj4string(tracts)
+```
+
+```{r}
+#transform points of hurricane path to a line (so that we can find all tracts along path)
+L = SpatialLines(list(Lines(list(Line(sandy_points@coords)),"X")))
+sandy_track <-SpatialLinesDataFrame(L, data.frame(ID=1:length(L)), match.ID = FALSE)
+
+#save hurricane track as shapefile
+writeOGR(sandy_track, "data/shp_files/Sandy/sandy_track", layer="sandy_track", driver="ESRI Shapefile", overwrite_layer = TRUE)
+dir_sandy_track <-paste0(dir, "/data/shp_files/Sandy/sandy_track")
+sandy_track <- readOGR(dir_sandy_track, "sandy_track")
+
+#asign same projection string as points shapefile
+proj4string(sandy_track) <- proj4string(sandy_points)
+
+
+#transform points of hurricane path to a line (so that we can find all tracts along path)
+L = SpatialLines(list(Lines(list(Line(irene_points@coords)),"X")))
+irene_track <-SpatialLinesDataFrame(L, data.frame(ID=1:length(L)), match.ID = FALSE)
+
+#save hurricane track as shapefile
+writeOGR(irene_track, "data/shp_files/Irene/irene_track", layer="irene_track", driver="ESRI Shapefile", overwrite_layer = TRUE)
+dir_irene_track <-paste0(dir, "/data/shp_files/Irene/irene_track")
+irene_track <- readOGR(dir_irene_track, "irene_track")
+
+#asign same projection string as points shapefile
+proj4string(irene_track) <- proj4string(irene_points)
+
+plot(sandy_track)
+plot(irene_track)
+
+```
+
+
+```{r}
+#clip census tracts to just those which instersect with Sandy track
+sandy_tracts <- tracts[sandy_track,]
+
+plot(sandy_tracts)
+lines(sandy_track, col = "red")
+
+
+irene_tracts <- tracts[irene_track,]
+
+plot(irene_tracts)
+lines(irene_track, col = "red")
+
+all_tracts <- append(sandy_tracts@data$GEOID, irene_tracts@data$GEOID) %>% unique()
+
+#intentionally make columns 1 year later. Means they were affected 1 year after disaster
+disaster_csv <- data.frame(tract_id = all_tracts, 
+                           `2012` = all_tracts %in% irene_tracts@data$GEOID %>% as.numeric(),
+                           `2013` = all_tracts %in% sandy_tracts@data$GEOID %>% as.numeric())
+
+disaster_csv_long <- gather(disaster_csv, key = "Year_After_Disaster", value = "Disaster", -tract_id)
+disaster_csv_long$Year <- substr(disaster_csv_long$Year, 2, 5)
+write.csv(disaster_csv_long, paste0(dir, "/data/disaster.csv"))
+```
+
+
+```{r ACS_housing}
+tract_housing <- read.csv(paste0(dir, "/data/tract_housing.csv"), nrows = 10)
+
+#Home value... I guess are constant at county level
+tract_housing[,c(4, grep("VALUEH", names(tract_housing)))]
+
+#Farm1 is non-farm, Farm2 is farm, how do these numbers make sense
+tract_housing$FARM_1
+tract_housing$FARM_2
+
+#built year, are these number of houses per tract in each category?
+tract_housing[, c(4, grep("BUILT", names(tract_housing)))]
+
+#mortgage
+tract_housing[, c(4, grep("MORTGAGE_", names(tract_housing))[1:4])]
+
+#FOODSTMP 0, 1, 2: number of households?
+tract_housing[,c(4, grep("FOODSTMP", names(tract_housing))[1:3])]
+
+#Property insurance, constant at County Level
+tract_housing$PROPINSR_P50
+```
+
+```{r ACS_HOUSEHOLD}
+#tract level obs
+tract_household <- read.csv(paste0(dir, "/data/tract_household.csv"), nrows = 10)
+
+#households that own vs rent per tract?
+tract_household[,c("OWNERSHP_1", "OWNERSHP_2")]
+
+#households of each race?
+tract_household[, c("RACE1_HH_B", "RACE1_HH_H", "RACE1_HH_O", "RACE1_HH_W")]
+
+#households by employment status
+tract_household[,41:44]
+
+#households by education level
+tract_household[, 30:40]
+
+#median income
+
+```
+
+
+```{r HMDA}
+#obs at tract level
+tract_hmda <- read.csv(paste0(dir, "/data/tract_hmda.csv"), nrows =10)
+
+#loan amounts
+#average loan amount by type 
+tract_hmda[,233:236]
+#median loan amount
+tract_hmda$AMOUNT_P50
+
+#GET MORE? Like purpose?
+```
+
+```{r zillow}
+zillow <- read.csv(paste0(dir, "/data/Neighborhood_Zhvi_SingleFamilyResidence.csv"))
+zillow %>% group_by(State) %>% summarize(count = length(Metro))
+```
+
+```{r fhfa}
+
+fhfa <- read.csv(paste0(dir, "/data/HPI_AT_BDL_tract.csv"))
+
+#monthly
+#HPI_master <- read_csv("data/HPI_master.csv")
+
+sd(fhfa$annual_change %>% as.character() %>% as.numeric(), na.rm = T)
+```
+
+
+```{r tract_pop}
+library(readxl)
+tract_pop <- read_excel(paste0(dir, "/data/censustract-00-10.xlsx"))
+write.csv(tract_pop, paste0(dir, "/data/tract_pop.csv"))
+glimpse(tract_pop)
+```
+
+
+```{r}
+library(sqldf)
+library(stringr)
+just_penn <- read.csv.sql(paste0(dir, "/data/tract_hmda.csv"),
+                        sql = "select * from file where `state` == 42")
+
+just_penn_practice <- select(just_penn, c("state", "year", "county", "tract"))
+                             
+just_penn_practice$county <- substr(just_penn_practice$county, 3, 5)
+just_penn_practice$tract <- paste0("0", just_penn_practice$tract)
+just_penn_practice$tract <- gsub("[.]", "", just_penn_practice$tract)
+just_penn_practice$tract <- str_pad(just_penn_practice$tract, 6, pad = "0", side = "right")
+just_penn_practice$tract_id <- paste0(just_penn_practice$state, just_penn_practice$county, just_penn_practice$tract)
+
+
+disaster_csv$tract_id <- as.character(disaster_csv$tract_id)
+
+
+merge_test <- left_join(disaster_csv, just_penn_practice, by = "tract_id")
+```
+
+
+

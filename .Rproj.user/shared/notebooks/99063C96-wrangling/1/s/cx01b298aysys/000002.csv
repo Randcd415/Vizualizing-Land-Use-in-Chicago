@@ -1,0 +1,11 @@
+"0","#get centroid of most recent shpfile"
+"0","JAN2019@data$CENTROID <- gCentroid(JAN2019, byid = TRUE)"
+"0","shp_files <- ls()[grep(""20"", ls())]"
+"0","for(i in 1:length(shp_files)){"
+"0","  temp <- get(shp_files[i])"
+"0","  matches <- over(JAN2019$CENTROID, as(temp, ""SpatialPolygons""))"
+"0","  JAN2019@data[, shp_files[i]] <- temp$ZONE_CLASS[matches]"
+"0","}"
+"2","Error in as(temp, ""SpatialPolygons"") : 
+  no method or default for coercing “tbl_df” to “SpatialPolygons”
+"

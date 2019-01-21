@@ -1,0 +1,14 @@
+"0","zoning_type <- read_csv(here(""clean_data"", ""zoning_type.csv""), col_names = T)
+"
+"2","Parsed with column specification:
+cols(
+  OBJECTID = col_integer(),
+  CREATE_DAT = col_date(format = """"),
+  EDIT_DATE = col_date(format = """"),
+  WARD = col_integer(),
+  Date = col_date(format = """"),
+  Zoning_class = col_integer(),
+  Zoning_type = col_character()
+)
+"
+"0","zoning_type$YEAR <- year(zoning_type$Date)"

@@ -1,0 +1,25 @@
+"0","zoning_data <- parcel_data@data[,c(1, 8, 10, 21:55)]
+type_cols <- names(zoning_data)[grep(""type"", names(zoning_data))]
+zoning_data <- zoning_data[,c(""OBJECTID"", ""CREATE_DAT"", ""EDIT_DATE"", ""WARD"", type_cols)]
+#note, date is not always mid month, doing this for simplicity
+names(zoning_data)[grep(""20"", names(zoning_data))] <- gsub(""_type"", """", names(zoning_data)[grep(""20"", names(zoning_data))])
+names(zoning_data)[grep(""20"", names(zoning_data))] <- paste0('15', names(zoning_data)[grep(""20"", names(zoning_data))])
+#put data in long format
+zoning_data <- gather(zoning_data, key = ""Date"", value = ""Zoning_class"", -c(""OBJECTID"", ""WARD"", ""CREATE_DAT"", ""EDIT_DATE""))
+"
+"2","attributes are not identical across measure variables;
+they will be dropped"
+"0","#convert to dates"
+"0","zoning_data <- mutate(zoning_data, Date=as.Date(Date, ""%d%b%Y""),"
+"0","                                   WARD = as.numeric(WARD), "
+"0","                                   CREATE_DAT = as.Date(CREATE_DAT),"
+"0","                                   Zoning_class = as.numeric(Zoning_class))"
+"0","#add in zone type codes"
+"0","Zoning_type <- c(""Business"", ""Commerical"", ""Manufacturing"", ""Residential"", ""Planned_Development"", ""Planned_Man_Districts"", ""Downtown_Mixed"", ""Downtown_Core"", ""Downtown_Res"", ""Downtown_Service"", ""Transportation"", ""Parks_Open_Space"", NA)"
+"0","#note: RT4-A is 1.2-1.5, but here counting as 1.5"
+"0","codes <- c(1:12, 0)"
+"0","zoning_type <- data.frame(Zoning_type, codes, stringsAsFactors = F)"
+"0","#merge codes with zoning data"
+"0","zoning_data <- left_join(zoning_data, zoning_type, by = c(""Zoning_class"" = ""codes"")) %>%"
+"0","                  subset(!is.na(Zoning_type))"
+"0","write_csv(zoning_data, here(""clean_data"", ""zoning_type.csv""))"

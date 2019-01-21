@@ -1,0 +1,9 @@
+{
+    "path" : "~/Harris MPP/Q5/Data Viz/project_chicago_zoning/clean_data",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}

@@ -1,0 +1,4 @@
+"0","acs_grouped_present$white_maj <- ifelse(p_white > .5, 1, 0)
+"
+"2","Error in ifelse(p_white > 0.5, 1, 0) : object 'p_white' not found
+"

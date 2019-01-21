@@ -1,0 +1,294 @@
+---
+title: "Program Eval Problem Set 1"
+author: "Student ID: 12173883 "
+date: "October 5, 2018"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+header-includes: \usepackage{dcolumn}
+---
+
+```{r setup, include=FALSE}
+rm(list=ls())
+library(tidyverse)
+library(haven)
+library(labelled)
+library(stargazer)
+library(cobalt)
+library(broom)
+library(AER)
+library(plm)
+library(knitr)
+data <- read_dta("SP_dataset.dta")
+```
+
+
+## Questions
+
+### Question 1
+
+Yes, Seguro Popular did reduce extreme expenditures on health. For both OLS and IV regressions, the treatment coefficients were consistently negative and significant, indicating that enrollment in Seguro Popular lowered extreme health spending. In addition, the methodology helps to control for unobservables because clusters are matched, and we know that the balance between treated and untreated villages of the same cluster pair is good.
+
+### Question 2
+
+It does not really matter how we define extreme expenditures, both measures show negative and significant treatment effects. The second measure does lower the magnitude of the coefficient somewhat, but because the sign does not change and the coefficient stays significant, I don't think the methodology is sensitive to definitions of extreme expenditures.
+
+## Data Questions
+
+### Question 1
+
+code below shows that there are indeed 100 unique cluster IDs, and 50 unique pair ID's
+```{r q1.1}
+data$cluster %>% unique() %>% length()
+data$clust_pair %>% unique() %>% length()
+```
+
+code below shows each pair has a treatment and control cluster
+```{r q1.2}
+#group the observations by pair ID, and then create a list of each pair's unique treatment values
+pair_check <- group_by(data, clust_pair) %>% 
+                  summarise(treatments = unique(treatment) %>% list())
+
+#output from this code shows that each pair's list of treatment values is either 1 & 0 or 0 & 1, indicating each pair has both treatment values.
+unique(pair_check$treatments)
+```
+
+Code below shows modal level of school is elementary school, and modal marital status is married. Share of households participating in Oportunidades is 45%. Mean non health expenditure is around 837 USD in 2005 and 817 USD in 2006. This number seems to make sense for household consumption in a rural household in Mexico.
+```{r q1.3}
+#create user-defined function for mode, borrowed from https://www.tutorialspoint.com/r/r_mean_median_mode.htm
+mode_func <- function(var) {
+   uniq <- unique(var)
+   uniq[which.max(tabulate(match(var, uniq)))]
+}
+
+#for modal level of schooling, gen sum of edu indicator variables excluding missing data, we see highest value is elementary school level
+ed_lvl <- summarise(data, none = sum(edu_info_051, na.rm = T),
+                          elementary = sum(edu_info_052, na.rm = T),
+                          secondary = sum(edu_info_053, na.rm = T),
+                          high_school = sum(edu_info_054, na.rm = T),
+                          college = sum(edu_info_055, na.rm = T))
+
+kable(ed_lvl, caption = "Frequency of Schooling Levels")
+
+#modal marital status is married
+val_label(data$marstat, mode_func(data$marstat))
+
+#share of households participating in cash transfer program is 45%
+mean(data$opor_05, na.rm = T)
+
+#mean non-health expenditure is around 837 USD in 2005 and 817 USD in 2006, this seems to make sense for a household in a developing country to spend over 10 months.
+mean(data$allbut_05, na.rm = T) / 12
+mean(data$allbut_06, na.rm = T) /12
+```
+
+### Question 2
+
+The Treatment parameter that can be identified in the data is the Average Treatament Effect on the Treated. The population in this case is not representative of the entire population of Mexico, but rather largely rural and unsalaried, so not already possessing health insurance. The impact of the treatment effect that we can capture from this data is likely different than how the treatment would affect a richer, more urban and insured population, and that richer poulation is probably not even going to register for this program, so is not interesting to us from a policy perspective. For this reason, the treatment parameter is ATT.
+
+### Question 3
+
+The code below shows that there are 6 variables for which balance regressions have nonzero treatment coefficients and signifigant p values. For most of these variables, the coefficients are very low, and are likely just significant because of the large sample size. The only concerning imbalance is insp2005: it appears that treatment group is more than twice as likely as the untreated group to already be enrolled in the benefits program. This can likely be controlled for however, so the bottom line is that balance is satisfactory. 
+
+```{r 3}
+#isolate the variables which are important for balance checking: demographic variables in 2005
+no_regress <- which(colnames(data) %in% c("id_hogar", "marstat", "food_yr_06", "allbut_06", "oop_yr3_06", "clust_pair", "insp2006", "treatment", "cluster")) 
+regress_var <- colnames(data[-no_regress])
+
+#loop over these variables and regress them against treatment variable, include dummies for cluster pair. We are interested in the treatment coefficient is significant, even while holding cluster pair constant, because this means that a cluster pair may be unbalanced for that dependent variable.
+balance_check <- sapply(regress_var, function(var) lm(eval(paste0(var, " ~ treatment + factor(clust_pair)")), data = data))
+
+#do some annoying and probably very inefficient coding to package this together in a nice way
+untreated_mean <- c()
+coef <- c()
+p_val <- c()
+
+no_treat <- data[data$treatment == 0,]
+
+for(var in regress_var){ #here I am appending lists with each variables mean, regression coefficient, and p_value
+  untreated_mean <- c(untreated_mean, no_treat[[var]] %>% mean(na.rm =T) %>% round(2))
+  coef <- c(coef, summary(balance_check[[var]])$coefficients[2,1])
+  p_val <- c(p_val, summary(balance_check[[var]])$coefficients[2,4])
+}
+
+balance_table <- data.frame(regress_var, untreated_mean, coef, p_val, stringsAsFactors = FALSE)
+balance_table$coef <- round(balance_table$coef, 2)
+balance_table$p_val <- round(balance_table$p_val, 3)
+
+#order the variables by statistically significant p_values, the variables at the top  have treatment coefficients from regressions (holding cluster_pair constant) that are nonzero and statistically significant, signifying that the treatment groups are unabalanced for these variables. Significantly, it appears that the treatment group (before treatment) is more likely to have a larger household, be already enrolled in Seguro Popular, and be enrolled in oportunidades. 
+arrange(balance_table, p_val) %>% kable(caption = "Balance Table: Variables Regressed on Treatment with Cluster Pair FEs")
+```
+
+### Question 4
+
+```{r q4}
+#create health share variable which is health spending divided by total spending
+data$health_share_05 <- data$oop_yr3_05 / (data$oop_yr3_05 + data$allbut_05)
+data$health_share_06 <- data$oop_yr3_06 / (data$oop_yr3_06 + data$allbut_06)
+
+#create adjusted health share variable, whichis health spending divided by total spending minus food expenditure
+
+data$adj_health_share_05 <- data$oop_yr3_05 / (data$oop_yr3_05 + data$allbut_05 - data$food_yr_05)
+data$adj_health_share_06 <- data$oop_yr3_06 / (data$oop_yr3_06 + data$allbut_06 - data$food_yr_06)
+
+```
+
+### Question 5
+
+Comments in code below show health spending distribution in each year, unadjusted and adjusted. 
+
+```{r q5}
+#In 2005, health spending mean share of total expenditures was around 2.8%, 75th percentile was 0% and 90th percentile was 9.2%
+mean(data$health_share_05, na.rm=T)
+quantile(data$health_share_05, probs = c(.75, .9), na.rm = T)
+
+#In 2006, health spending mean share of total expenditures was around 3.2%, 75th percentile was 0.8% and 90th percentile was 10.7%
+mean(data$health_share_06, na.rm=T)
+quantile(data$health_share_06, probs = c(.75, .9), na.rm = T)
+
+#In 2005, health spending mean share of disposable income was around 4.3%, 75th percentile was 0% and 90th percentile was 15.1%
+mean(data$adj_health_share_05, na.rm=T)
+quantile(data$adj_health_share_05, probs = c(.75, .9), na.rm = T)
+
+#In 2006, health spending mean share of disposable income was around 5%, 75th percentile was 1.5% and 90th percentile was 18%
+mean(data$adj_health_share_06, na.rm=T)
+quantile(data$adj_health_share_06, probs = c(.75, .9), na.rm = T)
+```
+
+### Question 6
+
+These measures are certainly correlated very because large health expenditures are likley to constitute 30% of disposable income if they are 20% of total budget, however it is possible that a family may have much less disposable income than their total income due to high food expenditures, because they have a large family or spend a lot on food. In this case, their health expenditures may be over 30% of disposable income even though they are below 20% of total expenditures.
+
+```{r q6}
+#make an extreme dummy 1
+data$extreme_1 <- ifelse(data$health_share_06 > 0.2, 1,0)
+data$extreme_1_05 <- ifelse(data$health_share_05 > 0.2, 1,0)
+
+#make an extreme dummy 2
+data$extreme_2 <- ifelse(data$adj_health_share_06 > 0.3, 1,0)
+data$extreme_2_05 <- ifelse(data$adj_health_share_05 > 0.3, 1,0)
+
+```
+
+### Question 7
+
+When we add cluster pair dummies, the treatment coefficient becomes higher in magnitude and has a lower standard error. This is because the cluster pair dummies help control for the unobservables in this regression that could affect extreme health spending. We assume that these unobservables may be similar between villages of the same cluster pair. Once these unobservable confounders are (partially!) controlled for by the cluster dummies, we can estimate the treatment effect with more precision, which is why the standard error shrinks. The treatment effect becomes more negative likely because the counfounders in the first regression were introducing upward bias.
+
+
+```{r Q7}
+#clustering process in R borrowed from: http://www.richard-bluhm.com/clustered-ses-in-r-and-stata-2/
+
+G <- length(unique(data$cluster))
+N <- length(data$cluster)
+
+mod1 <- plm(extreme_1 ~ treatment, data = data, model = "pooling", index = "cluster")
+dfa <- (G/(G-1)) * (N-1)/mod1$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod1, type = "HC0", cluster = "group", adjust = T)
+coef1 <- coeftest(mod1, vcov = cluster_c_vcov)
+
+mod2 <- plm(extreme_1 ~ treatment + factor(clust_pair), data = data, model = "pooling", index = "cluster")
+dfa <- (G/(G-1)) * (N-1)/mod2$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod2, type = "HC0", cluster = "group", adjust = T)
+coef2 <- coeftest(mod2, vcov = cluster_c_vcov)
+
+tidy(coef1) %>% kable(caption = "Extreme Health Spending Regressed on Treatment (clustered SEs)")
+
+tidy(coef2[1:2,]) %>% kable(caption = "Extreme Health Spending Regressed on Treatment ( cluster pair FEs and clustered SEs)")
+```
+
+### Question 8
+
+The baseline charcteristics regression (without cluster dummies) lead to a more negative treatment effect than its equivalent in the last question and a similar standard error. Adding in cluster dummies increases the magnitude of the treatment effect while also making it more precise, which is what happened with the Q7 regressions as well. 
+
+```{r q8}
+#adding in baseline charcteristics
+mod3 <- plm(extreme_1 ~ treatment + extreme_1_05 + sex + age + hhsize + food_yr_05 + allbut_05 + oop_yr3_05 + nkid_05 + nadult_05 + headwomen_05 + edu_info_051 + edu_info_052 + edu_info_053 + edu_info_054 + edu_info_055 + edu_info_056 + insp2005 + opor_05 + marstat1 + marstat2 + marstat3 + marstat4 + marstat5 + marstat6, data = data, model = "pooling", index = "cluster")
+
+dfa <- (G/(G-1)) * (N-1)/mod3$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod3, type = "HC0", cluster = "group", adjust = T)
+coef3 <- coeftest(mod3, vcov = cluster_c_vcov)
+
+#same model, but adding in FEs
+mod4 <- plm(extreme_1 ~ treatment + extreme_1_05 + sex + age + hhsize + food_yr_05 + allbut_05 + oop_yr3_05 + nkid_05 + nadult_05 + headwomen_05 + edu_info_051 + edu_info_052 + edu_info_053 + edu_info_054 + edu_info_055 + edu_info_056 + insp2005 + opor_05 + marstat1 + marstat2 + marstat3 + marstat4 + marstat5 + marstat6 + factor(clust_pair), data = data, model = "pooling", index = "cluster")
+
+dfa <- (G/(G-1)) * (N-1)/mod4$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod4, type = "HC0", cluster = "group", adjust = T)
+coef4 <- coeftest(mod4, vcov = cluster_c_vcov)
+
+tidy(coef3[1:2,]) %>% kable(caption = "Extreme Health Spending Regressed on Treatment and Baselines (clustered SEs)")
+
+tidy(coef4[1:2,]) %>% kable(caption = "Extreme Health Spending Regressed on Treatment and Baselines ( cluster pair FEs and clustered SEs)")
+```
+
+
+### Question 9
+
+Changing the dependent variable to the second measure of extreme health spending does not change the sign of the treatment coefficent, although it does slightly lower the magnitude. In one of the regressions below (adding in baselines without cluster dummies), the treatment coefficient is not significant, but when cluster dummies are added back in, the treatment becomes significant again. Because of this, I would say that these conclusions are not very sensitive to how we measure extreme health spending. 
+
+```{r q9}
+mod1.1 <- plm(extreme_2 ~ treatment, data = data, model = "pooling", index = "cluster")
+dfa <- (G/(G-1)) * (N-1)/mod1.1$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod1.1, type = "HC0", cluster = "group", adjust = T)
+coef1.1 <- coeftest(mod1.1, vcov = cluster_c_vcov)
+
+mod2.1 <- plm(extreme_2 ~ treatment + factor(clust_pair), data = data, model = "pooling", index = "cluster")
+dfa <- (G/(G-1)) * (N-1)/mod2.1$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod2.1, type = "HC0", cluster = "group", adjust = T)
+coef2.1 <- coeftest(mod2.1, vcov = cluster_c_vcov)
+
+mod3.1 <- plm(extreme_2 ~ treatment + extreme_2_05 + sex + age + hhsize + food_yr_05 + allbut_05 + oop_yr3_05 + nkid_05 + nadult_05 + headwomen_05 + edu_info_051 + edu_info_052 + edu_info_053 + edu_info_054 + edu_info_055 + edu_info_056 + insp2005 + opor_05 + marstat1 + marstat2 + marstat3 + marstat4 + marstat5 + marstat6, data = data, model = "pooling", index = "cluster")
+
+dfa <- (G/(G-1)) * (N-1)/mod3.1$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod3.1, type = "HC0", cluster = "group", adjust = T)
+coef3.1 <- coeftest(mod3.1, vcov = cluster_c_vcov)
+
+mod4.1 <- plm(extreme_2 ~ treatment + extreme_1_05 + sex + age + hhsize + food_yr_05 + allbut_05 + oop_yr3_05 + nkid_05 + nadult_05 + headwomen_05 + edu_info_051 + edu_info_052 + edu_info_053 + edu_info_054 + edu_info_055 + edu_info_056 + insp2005 + opor_05 + marstat1 + marstat2 + marstat3 + marstat4 + marstat5 + marstat6 + factor(clust_pair), data = data, model = "pooling", index = "cluster")
+
+dfa <- (G/(G-1)) * (N-1)/mod4.1$df.residual
+cluster_c_vcov <- dfa * vcovHC(mod4.1, type = "HC0", cluster = "group", adjust = T)
+coef4.1 <- coeftest(mod4.1, vcov = cluster_c_vcov)
+
+tidy(coef1.1) %>% kable(caption = "Second Spending Measure Regressed on Treatment (clustered SEs)")
+
+tidy(coef2.1[1:2,]) %>% kable(caption = "Second Spending Measure Regressed on Treatment ( cluster pair FEs and clustered SEs)")
+
+tidy(coef3.1) %>% kable(caption = "Second Spending Measure Regressed on Treatment and Baselines (clustered SEs)")
+
+tidy(coef4.1[1:2,]) %>% kable(caption = "Second Spending Measure Regressed on Treatment and Baselines ( cluster pair FEs and clustered SEs)")
+```
+
+### Question 10
+
+The Wald estimator can be interpreted as the impact of the treatment on the compliers, which in this case means the individuals who upon being exposed to the treatment's information campaign, decided to enroll in the program. Like all the regressions before this, the coefficient of our treatment varialbe (which for Wald is insp2006 instrumented by treatment) is negative, and for the Wald estimator it larger in magnitude than the OLS regressions.
+
+However, in order for these estimates to be valid, we have to assume that outcomes of each individual is independent of others' outcomes, that the instrument does not impact the outcome except through enrolling in the program, that the instrument actually does impact program enrollment (which it does), and that the treatment does not convince people who are already enrolled to unenroll. These assumptions are SUTVA, Exclusion, Instrument, and Monotonicity.
+```{r}
+mod5 <- ivreg(extreme_1 ~ insp2006 + sex + age + hhsize + food_yr_05 + 
+                  allbut_05 + oop_yr3_05 + nkid_05 + 
+                  nadult_05 + headwomen_05 + edu_info_051 + 
+                  edu_info_052 + edu_info_053 + edu_info_054 + 
+                  edu_info_055 + edu_info_056 + insp2005 + opor_05 + 
+                  marstat1 + marstat2 + marstat3 + marstat4 + 
+                  marstat5 + marstat6 | 
+                  . - insp2006 + treatment,
+                  data = data)
+
+
+mod6 <- ivreg(extreme_1 ~ insp2006 + sex + age + hhsize + food_yr_05 + 
+                  allbut_05 + oop_yr3_05 + nkid_05 + 
+                  nadult_05 + headwomen_05 + edu_info_051 + 
+                  edu_info_052 + edu_info_053 + edu_info_054 + 
+                  edu_info_055 + edu_info_056 + insp2005 + opor_05 + 
+                  marstat1 + marstat2 + marstat3 + marstat4 + 
+                  marstat5 + marstat6 + factor(clust_pair) | 
+                  . - insp2006 + treatment,
+                  data = data)
+
+
+coef(summary(mod5))[1:2,] %>% kable(caption = "Wald Estimator for Spending Measure 1")
+
+coef(summary(mod6))[1:2,] %>% kable(caption = "Wald Estimator for Spending Measure 1 (cluster pair FEs)")
+```
+
+
+Real Name: Cory Rand!
