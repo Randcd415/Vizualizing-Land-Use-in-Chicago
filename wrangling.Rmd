@@ -1,0 +1,289 @@
+---
+title: 'Data Wrangling: Zoning, Permits, ACS, Home Price'
+author: "Cory Rand"
+date: "January 10, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#rm(list = ls())
+library(data.table)
+library(rgdal)
+library(sp)
+library(rgeos)
+library(tidyverse)
+library(magrittr)
+library(here)
+library(stringr)
+library(tidycensus)
+library(sf)
+#get list of all files in directory
+shp_files <- list.files(here("raw_data","zoning_data"))
+
+read_shps <- function(x){
+  #get directory of specific shapefile
+  file <- paste0(here("raw_data", "zoning_data"), "/", x)
+  #get layer name of shapfile in file directory
+  layer <- list.files(file)[1] %>% substr(1, nchar(list.files(file)[1]) -4)
+  #read in shapefile
+  temp <- readOGR(file, layer = layer)
+  #make all column names capitals
+  names(temp) <- names(temp) %>% toupper()
+  #convert ordinance dates from string to date format
+  temp@data$EDIT_DATE <- temp@data$EDIT_DATE %>% as.Date()
+  #assign shapefile name indicating its timeperiod
+  name <- str_replace_all(layer, " ", "_")
+  name <- substr(name, nchar(name) - 6, nchar(name))
+  assign(name, temp, envir = .GlobalEnv)
+}
+  
+#use custom function to read in all shapefiles
+sapply(shp_files, read_shps) %>% invisible()
+
+#fix a few things 
+AUG2012 <- st_2012
+AUG2012 <- spTransform(AUG2012, proj4string(JAN2019))
+SEP2014 <- spTransform(SEP2014, proj4string(JAN2019))
+rm(st_2012)
+
+#read in ward data
+wards <- readOGR(here("raw_data", "Boundaries - Wards (2015-)"), layer = "geo_export_2308d057-9a78-43d2-94ac-9978dec82556")
+wards <- spTransform(wards, proj4string(SEP2016))
+
+#read in landmark data
+landmarks_shp <-  readOGR(here("raw_data", "Individual Landmarks"), layer = "geo_export_3c7a72b6-7cfa-4d1b-85bf-bc7d064e06e7")
+
+landmarks_shp <- spTransform(landmarks_shp, proj4string(JAN2019))
+```
+
+
+```{r}
+#get centroid of most recent shpfile
+JAN2019@data$CENTROID <- gCentroid(JAN2019, byid = TRUE)
+
+shp_files <- ls()[grep("20", ls())]
+
+for(i in 1:length(shp_files)){
+  temp <- get(shp_files[i])
+  matches <- over(JAN2019$CENTROID, as(temp, "SpatialPolygons"))
+  JAN2019@data[, shp_files[i]] <- temp$ZONE_CLASS[matches]
+}
+
+#clean up environment
+parcel_data <- JAN2019
+rm(list = ls()[grep("20", ls())])
+
+#match landmarks
+landmarks_shp$landmark <- landmarks_shp$landmark %>% as.character()
+landmarks_shp <- landmarks_shp[!is.na(landmarks_shp$landmark),]
+
+landmarks_shp$CENTROID <- gCentroid(landmarks_shp, byid = TRUE)
+landmarks_shp$PARCEL <- over(landmarks_shp$CENTROID, as(parcel_data, "SpatialPolygons"))
+
+landmarks_shp <- landmarks_shp[!is.na(landmarks_shp$PARCEL),]
+parcel_data$LANDMARKED <- NA
+parcel_data$LANDMARKED[landmarks_shp$PARCEL] <- landmarks_shp$landmark
+
+#match wards to parcels
+ward_matches <- over(parcel_data$CENTROID, as(wards, "SpatialPolygons"))
+parcel_data$WARD <- wards$ward[ward_matches]
+
+#clean up environment
+rm(landmarks_shp, ward_matches)
+```
+
+```{r}
+zoning_data <- parcel_data@data[,c(1, 8, 10, 21:38)]
+
+#note, date is not always mid month, doing this for simplicity
+names(zoning_data)[grep("20", names(zoning_data))] <- paste0('15', names(zoning_data)[grep("20", names(zoning_data))])
+
+#put data in long format
+zoning_data <- gather(zoning_data, key = "Date", value = "Zoning", -c("OBJECTID", "WARD", "LANDMARKED", "CREATE_DAT", "EDIT_DATE"))
+
+#convert to dates
+zoning_data <- mutate(zoning_data, Date=as.Date(Date, "%d%b%Y"),
+                                   LANDMARKED = as.Date(LANDMARKED, format = "%m/%d/%Y"),
+                                   WARD = as.numeric(WARD), 
+                                   CREATE_DAT = as.Date(CREATE_DAT))
+
+#create floor area ratio data
+Zoning <- c("RS-1", "RS-2", "RS-3", "RT-3.5", "RT-4", "RT-4A", "RM-4.5", "RM-5", "RM-5.5", "RM-6", "RM-6.5", "DR-10", "DR-3", "DR-5", "DR-7")
+#note: RT4-A is 1.2-1.5, but here counting as 1.5
+FAR <- c(0.5, 0.65, 0.9, 1.05, 1.2, 1.5, 1.7, 2, 2.5, 4.4, 6.6, 10, 3, 5, 7)
+far_levels <- data.frame(Zoning, FAR, stringsAsFactors = F)
+
+#merge floor area ratio data and filter to just residential tracts
+zoning_data <- left_join(zoning_data, far_levels, by = "Zoning") %>%
+                  subset(!is.na(FAR), select = c(OBJECTID, WARD, Date, Zoning, FAR, LANDMARKED, CREATE_DAT, EDIT_DATE))
+
+zoning_data <- zoning_data[order(zoning_data$LANDMARKED, zoning_data$OBJECTID),]
+
+#lag the timeseries data
+zoning_data_lag <- group_by(zoning_data, OBJECTID) %>%
+              mutate(LAG_FAR = dplyr::lag(FAR, n = 1, default = NA_character_, order_by = Date))
+
+#get landmark dummies
+landmarked_parcels <- filter(zoning_data_lag, LANDMARKED > 0)
+landmarked_parcels <- landmarked_parcels[!duplicated(landmarked_parcels[,1:2]),]
+landmarked_parcels %<>% mutate(Date = LANDMARKED, LANDMARKED = 1)
+
+#merge landmark dummy obs to parcel dataset
+zoning_data_lag$LANDMARKED <- 0 %>% as.numeric()
+zoning_data_lag %<>% bind_rows(landmarked_parcels)
+
+#create upzone and downzone dummies
+zoning_data_lag$UPZONE <- ifelse(zoning_data_lag$FAR > zoning_data_lag$LAG_FAR, 1, 0)
+zoning_data_lag$DOWNZONE <- ifelse(zoning_data_lag$FAR < zoning_data_lag$LAG_FAR, 1, 0)
+
+write_csv(zoning_data_lag, here("clean_data", "zoning.csv"))
+```
+
+
+NOTES:
+can't use AUG2012, no zone_class. Still gets read in by is nulled out when overlaid
+There duplicates of Apr 2017, so I deleted on from raw data files
+June 2016 actually Aug 2015, so I changed file name
+June 2015 is also actually Aug 2015, so I deleted it.
+June 2018 is July 2018, so I renamed it
+2017-2 inner files were labeled Dec2016, but they are 2017-2 so I renamed them
+
+
+Zone type is broad categories of zoning:
+1 = B, Business
+2 = C, Commercial
+3 = M, Manufacturing
+4 = R, Residential
+5 = PD, Planned Development
+6 = PMD, Planned Manufacturing Districts
+7 = DX, Downtown Mixed Use
+8 = DC, Downtown Core 
+9 = DR, Downtown Residential
+10 = DS, Downtown Service
+11 = T, Transportation
+12 = POS, Parks and Open Space
+0 = NA
+
+##############################
+## ACS DATA
+##############################
+```{r}
+#v16 <- load_variables(year = 2016, dataset = "acs5")
+
+acs_wide_2013_2017 <-  get_acs(geography = "tract", year = 2017, 
+                 variables = c("B01003_001", "B25008_002", "B25008_003",
+                               "B02001_002", "B02001_003", "B02001_004",
+                               "B02001_005", "B03002_012", "B17026_001",
+                               "B19025_001"), 
+                 state = "IL", county = "Cook", geometry = F, output = "wide")
+
+variable <-c("B01003_001E", "B25008_002E", "B25008_003E","B02001_002E", "B02001_003E", "B02001_004E","B02001_005E", "B03002_012E", "B17026_001E","B19025_001E",
+             "B01003_001M", "B25008_002M", "B25008_003M","B02001_002M", "B02001_003M", "B02001_004M","B02001_005M", "B03002_012M", "B17026_001M","B19025_001M")
+names <- c("pop_e", "owner_pop_e", "renter_pop_e", "white_pop_e", "black_pop_e", "indian_pop_e", "asian_pop_e", "hispanic_pop_e", "inc_pov_ratio_e", "agg_income_e",
+           "pop_m", "owner_pop_m", "renter_pop_m", "white_pop_m", "black_pop_m", "indian_pop_m", "asian_pop_m", "hispanic_pop_m", "inc_pov_ratio_m", "agg_income_m")
+var_names <- data.frame(variable, names, stringsAsFactors = F)
+
+variable <- names(acs_wide_2013_2017) %>% data.frame(stringsAsFactors = F)
+names(variable) <- "variable"
+renames <- left_join(variable, var_names, by = "variable")
+
+names(acs_wide_2013_2017)[3:22] <- renames$names[3:22]
+
+tracts <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2010"), layer = "geo_export_52dfa5f1-1eaf-49e1-9862-1998098d508c")
+tracts <- spTransform(tracts, proj4string(wards))
+tracts$CENTROID <- gCentroid(tracts, byid = T)
+
+tract_matches <- over(tracts$CENTROID, as(wards, "SpatialPolygons"))
+tracts$WARD <- wards$ward[tract_matches]
+tract_data <- tracts@data[,c(4, 11)]
+tract_data$geoid10 <- as.character(tract_data$geoid10)
+
+acs_wide_2013_2017 <- left_join(acs_wide_2013_2017, tract_data, by = c("GEOID"="geoid10"))
+write_csv(acs_wide_2013_2017, here("clean_data", "acs_2013_2017.csv"))
+
+#2000 data
+acs_wide_2000 <-  get_decennial(geography = "tract", year = 2000, 
+                 variables = c("TRACT", "H004001", "H004002", "H004003", "H005001", "H007003", "H006003", "H006005", "H007010", "H010001"), 
+                 state = "IL", county = "Cook", geometry = F, output = "wide")
+
+names(acs_wide_2000)[3:12] <- c("tract", "housing_units", "owned_units", "rented_units", "vacant_units", "white_alone","black_alone", "asian_alone", "hispanic_alone", "pop_housing")
+
+#line up 2000 level tracts to wards
+tracts_2000 <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2000"), layer = "geo_export_9b915034-d03a-43fc-945e-554302d0ce97")
+
+tracts_2000 <- spTransform(tracts_2000, proj4string(wards))
+tracts_2000$CENTROID <- gCentroid(tracts_2000, byid = T)
+
+tract_matches <- over(tracts_2000$CENTROID, as(wards, "SpatialPolygons"))
+tracts_2000$WARD <- wards$ward[tract_matches]
+tract_2000_data <- tracts_2000@data[,c(1, 20)]
+tract_2000_data$census_t_1 <- as.character(tract_2000_data$census_t_1)
+
+acs_wide_2000 <- left_join(acs_wide_2000, tract_2000_data, by = c("GEOID"="census_t_1"))
+acs_wide_2000$year <- 2000
+
+#2010 data
+acs_wide_2010 <- get_decennial(geography = "tract", year = 2010, 
+                 variables = c("TRACT", "H004001", "H004002", "H004003", "H005001", "H007003", "H006003", "H006005", "H007010", "H010001"), 
+                 state = "IL", county = "Cook", geometry = F, output = "wide")
+
+names(acs_wide_2010)[3:12] <- c("tract", "housing_units", "owned_units", "rented_units", "vacant_units", "white_alone","black_alone", "asian_alone", "hispanic_alone", "pop_housing")
+
+acs_wide_2010 <- left_join(acs_wide_2010, tract_data, by = c("GEOID"="geoid10"))
+acs_wide_2010$year <- 2010
+
+acs_2000_2010 <- bind_rows(acs_wide_2000, acs_wide_2010)
+
+write_csv(acs_2000_2010, here("clean_data", "acs_2000_2010.csv"))
+
+```
+
+
+
+##############################
+## Building Permits
+##############################
+```{r}
+wards <- st_read("raw_data/Boundaries - Wards (2015-)/geo_export_2308d057-9a78-43d2-94ac-9978dec82556.shp") %>%
+  st_set_crs(4326)
+
+permits_raw <- read_csv(here("raw_data", "Building_Permits.csv"), col_names = T)
+permits_narrow <- permits_raw[, c(1:13, 129:131)]
+permits_narrow %<>% mutate(ISSUE_DATE = as.Date(ISSUE_DATE, format = "%m/%d/%Y"),
+                           LOCATION = gsub(c("\\(|\\)"), "", LOCATION)) %>% 
+                  filter(!is.na(LATITUDE) & !is.na(LONGITUDE)) %>%
+                  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = 4326)
+
+permits_narrow <- st_join(permits_narrow, wards %>% select(ward), join = st_within)
+
+permits_filt <- filter(permits_narrow, PERMIT_TYPE == "PERMIT - NEW CONSTRUCTION")
+
+permits_filt$geometry <- NULL
+
+write_csv(permits_filt, here("clean_data", "permits.csv"))
+```
+
+########################
+## Rent Data ##
+########################
+```{r}
+fhfa <- read_csv(here("raw_data", "HPI_AT_BDL_tract.csv"), col_names = T)
+fhfa <- right_join(fhfa, tract_data, by = c("tract" ="geoid10"))
+fhfa <- mutate(fhfa, annual_change = as.numeric(annual_change),
+                     hpi = as.numeric(hpi),
+                     hpi1990 = as.numeric(hpi1990),
+                     hpi2000 = as.numeric(hpi2000))
+write_csv(fhfa, here("clean_data", "hpi.csv"))
+```
+
+
+
+```{r}
+permits_spatial <- SpatialPoints(permits_narrow[,16:17])
+proj4string(permits_spatial) <- proj4string(wards)
+
+ward_matches <- over(permits_spatial, as(wards, "SpatialPolygons"))
+permits_spatial$WARD <- wards$ward[ward_matches]
+```
+

@@ -1,0 +1,239 @@
+---
+title: "vizualizations"
+author: "Cory Rand"
+date: "January 19, 2019"
+output: html_document
+---
+
+```{r Zoning}
+library(tidyverse)
+
+########## zoning data ###############
+zoning <- read_csv(here("clean_data", "zoning.csv"), col_names = T)
+zoning$YEAR <- year(zoning$Date)
+
+zoning_group <- group_by(zoning, WARD, YEAR) %>% summarize(UPZONE = sum(UPZONE, na.rm = T),
+                                                   DOWNZONE = sum(DOWNZONE, na.rm = T),
+                                                   LANDMARKED = sum(LANDMARKED, na.rm = T),
+                                                   FAR = mean(FAR, na.rm = T))
+
+zoning_group <- zoning_group[order(zoning_group$WARD, zoning_group$YEAR),]
+
+zoning_plot <- zoning_group %>% group_by(WARD) %>% mutate(UPZONE_cs = cumsum(UPZONE),
+                                   DOWNZONE_cs = cumsum(DOWNZONE),
+                                   LANDMARKED_cs = cumsum(LANDMARKED))
+
+########## recent acs data ###############
+acs_2013_2017 <- read_csv(here("clean_data", "acs_2013_2017.csv"), col_names = T)
+acs_grouped_present <- group_by(acs_2013_2017, WARD) %>%
+                          summarize(pop = sum(pop_e, na.rm = T),
+                                    white = sum(white_pop_e, na.rm = T)) %>%
+                          mutate(p_white = white/pop,
+                                 white_maj = ifelse(acs_grouped_present$p_white > .7, 1, 0)) #14 wards greater than .7
+
+
+########## permits data #################
+permits <- read_csv(here("clean_data", "permits.csv"), col_names = T)
+permits$YEAR <- year(permits$ISSUE_DATE)
+names(permits)[15] <- "WARD"
+permits_plot <- permits[order(permits$WARD, permits$YEAR),] %>%
+                    group_by(WARD, YEAR) %>% 
+                    summarize(num_permits = length(ID)) %>%
+                    group_by(WARD) %>% mutate(permits_cs = cumsum(num_permits))
+
+
+########## home price data ##############
+hpi <- read_csv(here("clean_data", "hpi.csv"), col_names = T) %>%
+          group_by(WARD, year) %>% 
+          summarize(mean_hpi = mean(hpi, na.rm = T))
+names(hpi)[2] <- "YEAR"
+
+########### zoning type data ############
+zoning_type <- read_csv(here("clean_data", "zoning_type.csv"), col_names = T)
+zoning_type$YEAR <- year(zoning_type$Date)
+
+zoning_type_plot %<>% group_by(WARD, YEAR) %>%
+          summarize(p_b = sum(Zoning_class ==1, na.rm = T)/length(Zoning_type),
+                    p_c = sum(Zoning_class ==2, na.rm = T)/length(Zoning_type),
+                    p_m = sum(Zoning_class ==3, na.rm = T)/length(Zoning_type),
+                    p_r = sum(Zoning_class ==4, na.rm = T)/length(Zoning_type),
+                    p_pd = sum(Zoning_class ==5, na.rm = T)/length(Zoning_type),
+                    p_pmd = sum(Zoning_class ==6, na.rm = T)/length(Zoning_type),
+                    p_dx = sum(Zoning_class ==7, na.rm = T)/length(Zoning_type),
+                    p_dc = sum(Zoning_class ==8, na.rm = T)/length(Zoning_type),
+                    p_dr = sum(Zoning_class ==9, na.rm = T)/length(Zoning_type),
+                    p_ds = sum(Zoning_class ==10, na.rm = T)/length(Zoning_type),
+                    p_t = sum(Zoning_class ==11, na.rm = T)/length(Zoning_type),
+                    p_pos = sum(Zoning_class ==12, na.rm = T)/length(Zoning_type),
+                    p_na = sum(Zoning_class ==0, na.rm = T)/length(Zoning_type))
+
+########## merge zoning, permits, price, ###########
+master <- left_join(zoning_plot, permits_plot, by = c("WARD", "YEAR")) %>%
+                      left_join(hpi, by = c("WARD", "YEAR")) %>%
+                      left_join(zoning_type_plot) %>%
+                        left_join(acs_grouped_present, by = "WARD")
+
+######### create master at unique ward level ##############
+master_unique <- zoning_type[!duplicated(zoning_type$OBJECTID),] %>%
+                            group_by(WARD) %>%
+                            summarize(mean_create_date = mean(CREATE_DAT, na.rm = T),
+                                      mean_edit_date = mean(EDIT_DATE, na.rm = T)) %>%
+                            left_join(acs_grouped_present, by = "WARD")
+```
+
+```{r Zoning_plots}
+#does FAR change over time for wards? Not much
+master %>%
+  filter(YEAR > 2012) %>%
+ggplot(aes(x = YEAR, y = FAR, col = factor(WARD))) +
+  geom_line()
+
+      ########################################
+      ########### MAYBE THIS ONE #############
+      ########################################
+      #what about FAR vs p_white? White wards generally high or low FARs... I guess
+master %>%
+  filter(YEAR > 2012 & FAR < 7) %>%
+      ggplot(aes(x = p_white, y = FAR)) +
+        geom_point()
+
+#how about incidents of upzones? yeah for some districts!
+master %>%
+  filter(YEAR > 2012) %>%
+ggplot(aes(x = YEAR, y = UPZONE_cs, col = factor(WARD))) +
+  geom_line()
+
+      ########################################
+      ########### MAYBE THIS ONE #############
+      ########################################
+        #does that depend on race? yeah, white districts have outlier upzonings, or very few. Note when white maj goes from .7 to .8, outlier values are not         longer white maj
+master %>%
+  filter(YEAR > 2012) %>%
+        ggplot(aes(x = YEAR, y = UPZONE_cs, group = WARD, col = factor(white_maj))) +
+            geom_line()
+
+#how about incidents of downzones? there are so few of them
+master %>%
+  filter(YEAR > 2012) %>%
+ggplot(aes(x = YEAR, y = DOWNZONE_cs, group = WARD, col = factor(white_maj))) +
+  geom_line()
+
+#how about incidents of downzones AND landmarking? there are so few of them
+master %>%
+  filter(YEAR > 2012) %>%
+ggplot(aes(x = YEAR, y = DOWNZONE_cs + LANDMARKED_cs, group = WARD, col = factor(white_maj))) +
+  geom_line()
+
+
+   summarize(p_b = sum(Zoning_class ==1, na.rm = T)/length(Zoning_type),
+                    p_c = sum(Zoning_class ==2, na.rm = T)/length(Zoning_type),
+                    p_m = sum(Zoning_class ==3, na.rm = T)/length(Zoning_type),
+                    p_r = sum(Zoning_class ==4, na.rm = T)/length(Zoning_type),
+                    p_pd = sum(Zoning_class ==5, na.rm = T)/length(Zoning_type),
+                    p_pmd = sum(Zoning_class ==6, na.rm = T)/length(Zoning_type),
+                    p_dx = sum(Zoning_class ==7, na.rm = T)/length(Zoning_type),
+                    p_dc = sum(Zoning_class ==8, na.rm = T)/length(Zoning_type),
+                    p_dr = sum(Zoning_class ==9, na.rm = T)/length(Zoning_type),
+                    p_ds = sum(Zoning_class ==10, na.rm = T)/length(Zoning_type),
+                    p_t = sum(Zoning_class ==11, na.rm = T)/length(Zoning_type),
+                    p_pos = sum(Zoning_class ==12, na.rm = T)/length(Zoning_type),
+                    p_na = sum(Zoning_class ==0, na.rm = T)/length(Zoning_type))
+
+      ########################################
+      ########### MAYBE THIS ONE #############
+      ########################################
+#what about zoning types?
+#white areas are higher residential, less manufacturing, more parks
+master %>%
+  filter(YEAR > 2013) %>%
+  ggplot(aes(x = YEAR, y = p_pos, group = WARD, col = factor(white_maj))) +
+  geom_line()
+```
+
+
+```{r Permits}
+#Do numbers of permits for new construction vary over time? YES
+master %>%
+  filter(YEAR > 2012 & YEAR < 2019) %>%
+ggplot(aes(x = YEAR, y = num_permits, col = factor(WARD))) +
+  geom_line()
+
+      ########################################
+      ########### MAYBE THIS ONE #############
+      ########################################
+      #DOES RACE MATTER? Yes
+master %>%
+  filter(YEAR > 2012 & YEAR < 2019) %>%
+ggplot(aes(x = YEAR, y = num_permits, group = WARD, col = factor(white_maj))) +
+  geom_line()
+
+
+#do upzones correlate with building permits? not really
+master %>%
+  filter(YEAR == 2017) %>%
+ggplot(aes(x = UPZONE_cs, y = permits_cs)) +
+  geom_point()
+```
+
+```{r Home_Price}
+#does homeprice vary over time and by ward? yeah but looks weird
+master %>%
+  filter(!is.na(mean_hpi)) %>%
+ggplot(aes(x = YEAR, y = mean_hpi, col = factor(WARD))) +
+  geom_line()
+
+#does race matter? yeah but ugly
+master %>%
+  filter(!is.na(mean_hpi)) %>%
+ggplot(aes(x = YEAR, y = mean_hpi, group = WARD, col = factor(white_maj))) +
+  geom_line()
+
+      ########################################
+      ########### MAYBE THIS ONE #############
+      ########################################
+#another look at race... yeah duh
+master %>%
+  filter(YEAR == 2017) %>%
+      ggplot(aes(x = p_white, y = mean_hpi)) +
+        geom_point()
+```
+
+
+```{r}
+#Create dates has a patter here...
+master_unique %>%
+ggplot(aes(x = mean_create_date, y = p_white)) +
+  geom_point()
+```
+
+
+```{r ACS}
+acs_2000_2010 <- read_csv(here("clean_data", "acs_2000_2010.csv"), col_names = T)
+
+acs_grouped <- group_by(acs_2000_2010, WARD, year) %>%
+  
+                  summarize(housing = sum(housing_units, na.rm = T),
+                            owned = sum(owned_units, na.rm = T),
+                            rented = sum(rented_units, na.rm = T),
+                            vacant = sum(vacant_units, na.rm = T),
+                            white = sum(white_alone, na.rm = T),
+                            black = sum(black_alone, na.rm = T),
+                            asian = sum(asian_alone, na.rm = T),
+                            hispanic = sum(hispanic_alone, na.rm = T),
+                            pop = sum(pop_housing, na.rm = T)) %>%
+                  
+                  mutate(p_owned = owned/housing,
+                         p_rent = rented/housing,
+                         p_vac = vacant/housing,
+                         p_white = white/pop,
+                         p_black = black/pop,
+                         p_hispanic = hispanic/pop,
+                         p_asian = hispanic/pop) %>%
+                
+                  filter(!is.na(WARD))
+  
+#something's going wrong here. Can't recreate total housing units number from rent, owned, vacant... also like 40% of tracts have NA for wards but maybe because all those cook county tracts aren't in chicago
+ggplot(acs_grouped, aes(x = year, y = (p_rent + p_owned + p_vac), col = factor(WARD))) +
+  geom_line()
+```
+
