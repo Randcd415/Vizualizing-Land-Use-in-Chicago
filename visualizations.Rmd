@@ -29,7 +29,7 @@ acs_grouped_present <- group_by(acs_2013_2017, WARD) %>%
                           summarize(pop = sum(pop_e, na.rm = T),
                                     white = sum(white_pop_e, na.rm = T)) %>%
                           mutate(p_white = white/pop,
-                                 white_maj = ifelse(acs_grouped_present$p_white > .7, 1, 0)) #14 wards greater than .7
+                                 white_maj = ifelse(acs_grouped_present$p_white > .8, 1, 0))
 
 
 ########## permits data #################
@@ -125,7 +125,17 @@ ggplot(aes(x = YEAR, y = DOWNZONE_cs + LANDMARKED_cs, group = WARD, col = factor
   geom_line()
 
 
-   summarize(p_b = sum(Zoning_class ==1, na.rm = T)/length(Zoning_type),
+      ########################################
+      ########### MAYBE THIS ONE #############
+      ########################################
+#what about zoning types?
+#white areas are higher residential, less manufacturing, more parks
+master %>%
+  filter(YEAR > 2013) %>%
+  ggplot(aes(x = YEAR, y = p_pos, group = WARD, col = factor(white_maj))) +
+  geom_line()
+
+          summarize(p_b = sum(Zoning_class ==1, na.rm = T)/length(Zoning_type),
                     p_c = sum(Zoning_class ==2, na.rm = T)/length(Zoning_type),
                     p_m = sum(Zoning_class ==3, na.rm = T)/length(Zoning_type),
                     p_r = sum(Zoning_class ==4, na.rm = T)/length(Zoning_type),
@@ -139,15 +149,11 @@ ggplot(aes(x = YEAR, y = DOWNZONE_cs + LANDMARKED_cs, group = WARD, col = factor
                     p_pos = sum(Zoning_class ==12, na.rm = T)/length(Zoning_type),
                     p_na = sum(Zoning_class ==0, na.rm = T)/length(Zoning_type))
 
-      ########################################
-      ########### MAYBE THIS ONE #############
-      ########################################
-#what about zoning types?
-#white areas are higher residential, less manufacturing, more parks
+#do zoning types and permits correlate? p_b is up, p_m is down, p_r is up
 master %>%
-  filter(YEAR > 2013) %>%
-  ggplot(aes(x = YEAR, y = p_pos, group = WARD, col = factor(white_maj))) +
-  geom_line()
+  filter(YEAR ==2017) %>%
+  ggplot(aes(x = p_pos, y = permits_cs)) +
+  geom_point()
 ```
 
 
@@ -172,6 +178,11 @@ ggplot(aes(x = YEAR, y = num_permits, group = WARD, col = factor(white_maj))) +
 master %>%
   filter(YEAR == 2017) %>%
 ggplot(aes(x = UPZONE_cs, y = permits_cs)) +
+  geom_point()
+
+master %>%
+  filter(YEAR == 2013) %>%
+ggplot(aes(x = UPZONE_cs, y = num_permits)) +
   geom_point()
 ```
 
@@ -200,11 +211,48 @@ master %>%
 
 
 ```{r}
-#Create dates has a patter here...
+#create and edit dates don't really have a pattern.
 master_unique %>%
 ggplot(aes(x = mean_create_date, y = p_white)) +
-  geom_point()
+  geom_point() +
+  geom_smooth(method = "lm")
 ```
+
+
+
+
+```{r white_price}
+
+#add shape or color?
+master %>%
+  filter(YEAR == 2017) %>%
+      ggplot(aes(x = p_white, y = mean_hpi)) +
+        geom_point() +
+          labs(
+              title="Whiter Wards in Chicago Have More Expensive Homes",
+              subtitle="Census Tract Home Price Indices and Demographics Aggregated up Ward (2017) ",
+              caption="Federal Housing Finance Agency and American Community Survey Data",
+              x="Percentage White",
+              y="Avg Home Price Index"
+              )
+
+
+master %>%
+  filter(YEAR == 2017) %>%
+      ggplot(aes(x = p_white, y = mean_hpi)) +
+        geom_point() +
+          labs(
+              title="Whiter Wards in Chicago Have More Expensive Homes",
+              subtitle="Census Tract Home Price Indices and Demographics Aggregated up Ward (2017) ",
+              caption="Federal Housing Finance Agency and American Community Survey Data",
+              x="Percentage White",
+              y="Avg Home Price Index"
+              )
+
+```
+
+
+
 
 
 ```{r ACS}
