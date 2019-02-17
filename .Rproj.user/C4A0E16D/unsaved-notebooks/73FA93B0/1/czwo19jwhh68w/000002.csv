@@ -1,7 +1,0 @@
-"0","permits_filt %>%
-  filter(RESIDENTIAL == 1) %>%
-ggplot(aes(col = SFR)) +
-  geom_sf()
-"
-"2","
-"

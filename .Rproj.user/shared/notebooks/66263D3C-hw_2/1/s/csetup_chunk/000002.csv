@@ -1,5 +1,0 @@
-"0","knitr::opts_chunk$set(echo = TRUE)"
-"0","library(haven)"
-"0","library(tidyverse)"
-"0","library(broom)"
-"0","wage <- read_dta(""~/Harris MPP/Q5/Stats TA/HW/WAGE2.DTA"")"

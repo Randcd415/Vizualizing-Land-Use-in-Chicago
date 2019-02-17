@@ -1,4 +1,0 @@
-"0","#run regression adding KWW as control"
-"0","lm(lwage ~ educ + KWW, data = wage) %>%"
-"0","  summary() %>%"
-"0","  tidy()"
