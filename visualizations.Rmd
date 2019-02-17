@@ -12,16 +12,18 @@ library(tidyverse)
 zoning <- read_csv(here("clean_data", "zoning.csv"), col_names = T)
 zoning$YEAR <- year(zoning$Date)
 
-zoning_group <- group_by(zoning, WARD, YEAR) %>% summarize(UPZONE = sum(UPZONE, na.rm = T),
+zoning_group <- group_by(zoning, REGION, YEAR) %>% summarize(UPZONE = sum(UPZONE, na.rm = T),
                                                    DOWNZONE = sum(DOWNZONE, na.rm = T),
                                                    LANDMARKED = sum(LANDMARKED, na.rm = T),
                                                    FAR = mean(FAR, na.rm = T))
 
-zoning_group <- zoning_group[order(zoning_group$WARD, zoning_group$YEAR),]
+zoning_group <- zoning_group[order(zoning_group$REGION, zoning_group$YEAR),]
 
-zoning_plot <- zoning_group %>% group_by(WARD) %>% mutate(UPZONE_cs = cumsum(UPZONE),
+zoning_plot <- zoning_group %>% group_by(REGION) %>% mutate(UPZONE_cs = cumsum(UPZONE),
                                    DOWNZONE_cs = cumsum(DOWNZONE),
                                    LANDMARKED_cs = cumsum(LANDMARKED))
+
+
 
 ########## recent acs data ###############
 acs_2013_2017 <- read_csv(here("clean_data", "acs_2013_2017.csv"), col_names = T)
@@ -29,30 +31,49 @@ acs_grouped_present <- group_by(acs_2013_2017, WARD) %>%
                           summarize(pop = sum(pop_e, na.rm = T),
                                     white = sum(white_pop_e, na.rm = T)) %>%
                           mutate(p_white = white/pop,
-                                 white_maj = ifelse(acs_grouped_present$p_white > .8, 1, 0))
+                                 white_maj = ifelse(acs_grouped_present$p_white > .8, "Yes", "No"))
 
 
+########## brown acs data #################
+brown_acs <- read_csv(here("clean_data", "brown_acs.csv"), col_names = T)
+brown_acs$YEAR %<>% as.numeric()
+brown_acs$REGION %<>% as.character()
 ########## permits data #################
 permits <- read_csv(here("clean_data", "permits.csv"), col_names = T)
 permits$YEAR <- year(permits$ISSUE_DATE)
-names(permits)[15] <- "WARD"
-permits_plot <- permits[order(permits$WARD, permits$YEAR),] %>%
-                    group_by(WARD, YEAR) %>% 
+names(permits)[15] <- "REGION"
+permits_plot <- permits[order(permits$REGION, permits$YEAR),] %>%
+                    group_by(REGION, YEAR) %>% 
                     summarize(num_permits = length(ID)) %>%
-                    group_by(WARD) %>% mutate(permits_cs = cumsum(num_permits))
-
-
+                    group_by(REGION) %>% mutate(permits_cs = cumsum(num_permits))
 ########## home price data ##############
-hpi <- read_csv(here("clean_data", "hpi.csv"), col_names = T) %>%
-          group_by(WARD, year) %>% 
-          summarize(mean_hpi = mean(hpi, na.rm = T))
-names(hpi)[2] <- "YEAR"
+#a little over half of these tracts have no data
+#hpi_tract <- read_csv(here("clean_data", "hpi.csv"), col_names = T)
+#names(hpi_tract_filt) %<>% paste0("_hpi")
+
+#names(hpi_tract)[3] <- "YEAR"
+#hpi <- read_csv(here("clean_data", "hpi.csv"), col_names = T) %>%
+          #group_by(WARD, year) %>% 
+          #summarize(mean_hpi = mean(hpi, na.rm = T))
+#names(hpi)[2] <- "YEAR"
+
+#some of this data isn't here for chicago
+zhvi <- read_csv(here("clean_data", "zhvi.csv"), col_names = T)
+
+missing_vals <- zhvi %>% filter(!is.na(HVI)) %>% group_by(RegionName) %>% summarize(length = length(Date)) %>% subset(length < 272, select = RegionName)
+
+zhvi_clean <- zhvi %>% filter(!(RegionName %in% missing_vals$RegionName)) %>% group_by(Date) %>%
+  mutate(ranking = order(order(HVI, decreasing = T)),
+         YEAR = year(Date)) %>% ungroup() %>%
+         group_by(RegionID, RegionName, YEAR) %>%
+         summarize(mean_hvi = mean(HVI, na.rm = T),
+                   mean_rank = mean(ranking, na.rm = T))
 
 ########### zoning type data ############
 zoning_type <- read_csv(here("clean_data", "zoning_type.csv"), col_names = T)
 zoning_type$YEAR <- year(zoning_type$Date)
 
-zoning_type_plot %<>% group_by(WARD, YEAR) %>%
+zoning_type_plot <- zoning_type %>% group_by(WARD, YEAR) %>%
           summarize(p_b = sum(Zoning_class ==1, na.rm = T)/length(Zoning_type),
                     p_c = sum(Zoning_class ==2, na.rm = T)/length(Zoning_type),
                     p_m = sum(Zoning_class ==3, na.rm = T)/length(Zoning_type),
@@ -226,28 +247,57 @@ ggplot(aes(x = mean_create_date, y = p_white)) +
 #add shape or color?
 master %>%
   filter(YEAR == 2017) %>%
-      ggplot(aes(x = p_white, y = mean_hpi)) +
-        geom_point() +
-          labs(
-              title="Whiter Wards in Chicago Have More Expensive Homes",
-              subtitle="Census Tract Home Price Indices and Demographics Aggregated up Ward (2017) ",
-              caption="Federal Housing Finance Agency and American Community Survey Data",
-              x="Percentage White",
-              y="Avg Home Price Index"
-              )
+      ggplot(aes(x = p_white, y = mean_hpi, size = p_m)) +
+        geom_point(alpha = 0.5) +
+        labs(
+            title="Whiter Wards Have More Expensive Homes, Less Manufacturing",
+            subtitle="Prices and demographics aggregated from tract level, zoning at parcel level (2017)",
+            caption="Federal Housing Finance Agency, and American Community Survey Data",
+            x="Percentage White",
+            y="Avg Home Price Index",
+            size = "Ward % Zoned Manufacturing"
+            ) +
+        theme_classic() +
+ggsave(here("graphs", "Price_manufacturing.pdf"))
 
 
+master %>% #removing outlier ward
+  filter(YEAR == 2017 & FAR < 7) %>%
+      ggplot(aes(x = reorder(factor(WARD), FAR), y = FAR, fill = white_maj)) +
+        geom_bar(stat = "identity") + 
+        labs(
+          title="The Whitest Wards in Chicago Have Either High Or Low Densities",
+          subtitle="Census tract floor area ratios, and demographics (2017) ",
+          caption="Chicago City Scape and American Community Survey Data",
+          x="Wards",
+          y="Average Floor Area Ratio",
+          fill = "80% or More White"
+          ) +
+          theme_classic() +
+          theme(
+          axis.ticks.x=element_blank(),
+          axis.text.x=element_blank()
+          ) 
+ggsave(here("graphs", "FAR_White.pdf"))
+
+
+
+library(gghighlight)
 master %>%
-  filter(YEAR == 2017) %>%
-      ggplot(aes(x = p_white, y = mean_hpi)) +
-        geom_point() +
+  filter(YEAR > 2013 & YEAR < 2019) %>%
+ggplot(aes(x = YEAR, y = num_permits, group = WARD)) +
+  geom_line() +
+  gghighlight(p_white > .8, label_key = fill) +
           labs(
-              title="Whiter Wards in Chicago Have More Expensive Homes",
-              subtitle="Census Tract Home Price Indices and Demographics Aggregated up Ward (2017) ",
-              caption="Federal Housing Finance Agency and American Community Survey Data",
-              x="Percentage White",
-              y="Avg Home Price Index"
-              )
+          title="The Whitest Wards in Chicago Generally Have More Construction",
+          subtitle="Building permits for new construction, and demographics (2014-2018) ",
+          caption="Chicago Open Data and American Community Survey Data",
+          x="Year",
+          y="Building Permits for New Construction",
+          fill = "80% or More White"
+          ) +
+          theme_classic()
+ggsave(here("graphs", "Price_parks.pdf"))
 
 ```
 
@@ -285,3 +335,243 @@ ggplot(acs_grouped, aes(x = year, y = (p_rent + p_owned + p_vac), col = factor(W
   geom_line()
 ```
 
+```{r brown_acs viz}
+brown_spread <- brown_acs %>% 
+  select(names(brown_acs)[c(1:2, 6, 11, 15:24)]) %>%
+  unite(temp, names(brown_acs)[c(2, 6, 15:24)]) %>%
+  spread(key = "YEAR", value = "temp") %>%
+  separate("1970", into = paste0("1970_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("1980", into = paste0("1980_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("1990", into = paste0("1990_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("2000", into = paste0("2000_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("2010", into = paste0("2010_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  mutate(`1980_hu_pchange` = (`1980_hu` - `1970_hu`) / `1970_hu`,
+         `1990_hu_pchange` = (`1990_hu` - `1980_hu`) / `1980_hu`,
+         `2000_hu_pchange` = (`2000_hu` - `1990_hu`) / `1990_hu`,
+         `2010_hu_pchange` = (`2010_hu` - `2000_hu`) / `2000_hu`) #%>%
+  #left_join(hpi_tract_filt, by = c("trtid10" = "tract_hpi"))
+
+tract_2010 <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2010"), layer = "geo_export_52dfa5f1-1eaf-49e1-9862-1998098d508c") %>%
+  sp::merge(brown_spread, by.x = "geoid10", by.y = "trtid10")
+```
+
+```{r}
+plot_time <- function(x){
+   plot <- tm_shape(tract_2010) + 
+                      tm_fill(col = x, 
+                              title = x,
+                              breaks = test) + 
+                      tm_borders() + 
+                      tm_layout(attr.outside = FALSE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.9, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = FALSE, 
+                                main.title = x, 
+                                main.title.position = "center", frame = FALSE)
+   print(plot)
+  }
+
+test <- c(0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1)
+plot_time("1970_pwhite")
+plot_time("1980_pwhite")
+plot_time("1990_pwhite")
+plot_time("2000_pwhite")
+plot_time("2010_pwhite")
+#pop in general lowers, concentrates downtown and north east/west. Less south
+test <- quantile(tract_2010$`2010_pop`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1))
+plot_time("1970_pop")
+plot_time("1980_pop")
+plot_time("1990_pop")
+plot_time("2000_pop")
+plot_time("2010_pop")
+
+#VERY INTERESTING. Lots of places losing white percentage, some gaining
+test <- c(0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1)
+plot_time("1970_pwhite")
+plot_time("1980_pwhite")
+plot_time("1990_pwhite")
+plot_time("2000_pwhite")
+plot_time("2010_pwhite")
+
+#hard to tell.. south losing stuff, and maybe that place growing in white majority is not increasing as fast as tracts around them?
+test <- quantile(tract_2010$`2010_hu`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1), na.rm = T)
+plot_time("1970_hu")
+plot_time("1980_hu")
+plot_time("1990_hu")
+plot_time("2000_hu")
+plot_time("2010_hu")
+
+#interesting. WAAy less people now own vs rent, especially between 2000 and 2010
+test <- quantile(tract_2010$`2010_pohu`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1), na.rm = T)
+plot_time("1970_pohu")
+plot_time("1980_pohu")
+plot_time("1990_pohu")
+plot_time("2000_pohu")
+plot_time("2010_pohu")
+
+test <- quantile(tract_2010$`2010_pop_d_h`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1), na.rm = T)
+plot_time("1970_pop_d_h")
+plot_time("1980_pop_d_h")
+plot_time("1990_pop_d_h")
+plot_time("2000_pop_d_h")
+plot_time("2010_pop_d_h")
+
+
+test <- quantile(tract_2010$`2010_h_d_land`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1), na.rm = T)
+plot_time("1970_h_d_land")
+plot_time("1980_h_d_land")
+plot_time("1990_h_d_land")
+plot_time("2000_h_d_land")
+plot_time("2010_h_d_land")
+
+
+test <- quantile(tract_2010$`2010_hu_pchange`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1), na.rm = T)
+plot_time("1980_hu_pchange")
+plot_time("1990_hu_pchange")
+plot_time("2000_hu_pchange")
+plot_time("2010_hu_pchange")
+
+test <- quantile(tract_2010$`2010_hpi`, probs = c(0,.1,.2,.3,.4,.5,.6,.7,.8,.9,1), na.rm = T)
+plot_time("1980_hpi")
+plot_time("1990_hpi")
+plot_time("2000_hpi")
+plot_time("2010_hpi")
+```
+
+```{r}
+tract_2010 <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2010"), layer = "geo_export_52dfa5f1-1eaf-49e1-9862-1998098d508c")
+
+hpi_shp <- tract_2010 %>%
+  sp::merge(hpi_tract[which(hpi_tract$year ==2021),], by.x = "geoid10", by.y = "tract")
+    tm_shape(hpi_shp) + 
+                      tm_fill(col = "hpi", 
+                              title = "hpi",
+                              palette = "RdBu",
+                              midpoint = NA,
+                              breaks = test) + 
+                      tm_borders() + 
+                      tm_layout(attr.outside = FALSE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.9, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = FALSE, 
+                                main.title = "hpi", 
+                                main.title.position = "center", frame = FALSE)
+```
+
+
+```{r}
+ward_merge <- sp::merge(wards, zoning_plot[which(zoning_plot$YEAR == 2019),], by.x = "ward", by.y = "WARD")
+#interesting, one main area with all these upzones
+    tm_shape(ward_merge) + 
+                      tm_fill(col = "UPZONE_cs", 
+                              title = "upzone") + 
+                      tm_borders() + 
+                      tm_layout(attr.outside = FALSE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.9, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = FALSE, 
+                                main.title = "upzone", 
+                                main.title.position = "center", frame = FALSE)
+    
+  #nothing else interesting here.. except Ward 37 has high FAR
+        tm_shape(ward_merge) + 
+                      tm_fill(col = "FAR", 
+                              title = "FAR",
+                              breaks = c(0,.5, 1, 1.5, 2, 2.5, 3, 3.5, 4)) + 
+                      tm_borders() + 
+                      tm_layout(attr.outside = FALSE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.9, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = FALSE, 
+                                main.title = "FAR", 
+                                main.title.position = "center", frame = FALSE)
+```
+
+
+```{r}
+
+#that area with all the recent upzones also has a lot of new construction
+ward_perm <- sp::merge(wards, permits_plot[which(permits_plot$YEAR == 2018),], by.x = "ward", by.y = "WARD")
+
+        tm_shape(ward_perm) + 
+                      tm_fill(col = "permits_cs", 
+                              title = "permits") +
+          tm_borders() + 
+                      tm_layout(attr.outside = FALSE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.9, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = FALSE, 
+                                main.title = "permits", 
+                                main.title.position = "center", frame = FALSE)
+```
+
+```{r}
+zhvi_trim <- zhvi_clean %>% filter(YEAR == max(zhvi_clean$YEAR) | YEAR == min(zhvi_clean$YEAR)) %>%
+        unite(temp, c("mean_hvi", "mean_rank")) %>%
+        spread(key = "YEAR", value = temp) %>% 
+        separate("1996", into = paste0("1996_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        separate("2018", into = paste0("2018_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        mutate(change_rank = `2018_mean_rank` - `1996_mean_rank`,
+               change_hvi = `2018_mean_hvi` - `1996_mean_hvi`)
+
+up_neigh <- zhvi_trim$RegionID[order(zhvi_trim$change_rank, decreasing = T)] %>% head(2)
+down_neigh <- zhvi_trim$RegionID[order(zhvi_trim$change_rank, decreasing = T)] %>% tail(2)
+changing_neigh <- append(up_neigh, down_neigh)
+losing_neigh <- zhvi_trim$RegionID[which(zhvi_trim$change_rank < 0)]
+
+library(gghighlight)
+zhvi_clean %>%
+  mutate(lost_rank = ifelse(RegionID %in% losing_neigh, -1, 1)) %>%
+ggplot(aes(x = YEAR, y = mean_rank, group = RegionID)) +
+  geom_line(aes(col = lost_rank)) +
+  gghighlight(RegionID %in% changing_neigh, label_key = RegionName, unhighlighted_colour = ggplot2::alpha("grey", 0.4)) +
+          labs(
+          title="Blank and Blank Neighborhoods change a lot",
+          subtitle="Ranking Chicago Neighborhoods by Home Value",
+          caption="Zillow",
+          x="Year",
+          y="Neighborhood Rank"
+          ) +
+          theme_classic() +
+          scale_colour_gradient2(low = scales::muted("blue"), high = scales::muted("red")) +
+          scale_y_reverse()
+#ggsave(here("graphs", "Price_parks.pdf"))
+```
+
+
+
+```{r}
+zillow_shp_merge <- sp::merge(zillow_shp, zhvi_trim, by = "RegionID")
+
+
+        tm_shape(zillow_shp_merge) + 
+                      tm_fill(col = "change_rank", 
+                              title = "2018") +
+          tm_borders() + 
+                      tm_layout(attr.outside = FALSE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.9, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = FALSE, 
+                                main.title = "hvi", 
+                                main.title.position = "center", frame = FALSE)
+```
+
+
+```{r}
+brown_acs %>% 
+  group_by(YEAR) %>% 
+  summarize(total_housing = sum(hu, na.rm = T),
+            total_population = sum(pop, na.rm = T)) %>% 
+  mutate(ratio = total_population/total_housing)

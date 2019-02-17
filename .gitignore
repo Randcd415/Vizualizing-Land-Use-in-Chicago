@@ -1,0 +1,16 @@
+*.Rproj.user
+*.Rhistory
+*.RData
+*.Ruserdata
+*.xls
+*.xlsx
+*.csv
+*.dbf
+*.prj
+*.shp
+*.shx
+*.Rproj
+clean_data
+raw_data
+viz_second_draft_files
+rand_code_sample.html

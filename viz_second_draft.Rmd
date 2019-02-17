@@ -1,0 +1,337 @@
+---
+title: "Visualizing Chicago's Changing Neighborhoods"
+author: "Cory Rand"
+date: "January 27, 2019"
+output:
+  pdf_document: default
+  html_document: default
+code_folding: hide
+---
+
+### NOTE: These are all new plots!
+
+```{r Setup, include = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(RColorBrewer)
+library(gghighlight)
+library(lubridate)
+library(tidyverse)
+library(here)
+library(magrittr)
+library(tmap)
+library(grid)
+library(rgdal)
+
+```
+
+```{r Read and Prep Data, include = F}
+######### Zoning ############3
+zoning <- read_csv(here("clean_data", "zoning.csv"), col_names = T)
+zoning$YEAR <- year(zoning$Date)
+
+zoning_group <- group_by(zoning, REGION, YEAR) %>% summarize(UPZONE = sum(UPZONE, na.rm = T),
+                                                   DOWNZONE = sum(DOWNZONE, na.rm = T),
+                                                   LANDMARKED = sum(LANDMARKED, na.rm = T),
+                                                   FAR = mean(FAR, na.rm = T))
+
+zoning_group <- zoning_group[order(zoning_group$REGION, zoning_group$YEAR),]
+
+zoning_plot <- zoning_group %>% group_by(REGION) %>% mutate(UPZONE_cs = cumsum(UPZONE),
+                                   DOWNZONE_cs = cumsum(DOWNZONE),
+                                   LANDMARKED_cs = cumsum(LANDMARKED))
+############# PERMITS ####################
+permits <- read_csv(here("clean_data", "permits.csv"), col_names = T)
+permits$YEAR <- year(permits$ISSUE_DATE)
+names(permits)[15] <- "REGION"
+permits_plot <- permits[order(permits$REGION, permits$YEAR),] %>%
+                    group_by(REGION, YEAR) %>% 
+                    summarize(num_permits = length(ID)) %>%
+                    group_by(REGION) %>% mutate(permits_cs = cumsum(num_permits))
+permits_collapsed <- permits_plot %>% group_by(REGION) %>% summarize(permits_cs = max(permits_cs))
+
+############# HOME PRICE DATA ########################
+zhvi <- read_csv(here("clean_data", "zhvi.csv"), col_names = T)
+
+missing_vals <- zhvi %>% filter(!is.na(HVI)) %>% group_by(RegionName) %>% summarize(length = length(Date)) %>% subset(length < 272, select = RegionName)
+
+zhvi_clean <- zhvi %>% filter(!(RegionName %in% missing_vals$RegionName)) %>% group_by(Date) %>%
+  mutate(ranking = order(order(HVI, decreasing = T)),
+         YEAR = year(Date)) %>% ungroup() %>%
+         group_by(RegionID, RegionName, YEAR) %>%
+         summarize(mean_hvi = mean(HVI, na.rm = T),
+                   mean_rank = mean(ranking, na.rm = T))
+
+zhvi_trim <- zhvi_clean %>% filter(YEAR == max(zhvi_clean$YEAR) | YEAR == 2010 | YEAR == min(zhvi_clean$YEAR)) %>%
+        unite(temp, c("mean_hvi", "mean_rank")) %>%
+        spread(key = "YEAR", value = temp) %>% 
+        separate("1996", into = paste0("1996_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        separate("2010", into = paste0("2010_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        separate("2018", into = paste0("2018_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        mutate(change_rank = `2018_mean_rank` - `1996_mean_rank`,
+               change_hvi = `2018_mean_hvi` - `1996_mean_hvi`)
+
+############# ACS DATA FROM BROWN LOGITUDINAL DATABASE ########################
+brown_acs <- read_csv(here("clean_data", "brown_acs.csv"), col_names = T)
+brown_acs$YEAR %<>% as.numeric()
+
+############ AGGREGATE CENSUS DATA TO TRACT LEVEL ############
+brown_spread <- brown_acs %>% 
+  select(names(brown_acs)[c(1:2, 6, 11, 15:24)]) %>%
+  unite(temp, names(brown_acs)[c(2, 6, 15:24)]) %>%
+  spread(key = "YEAR", value = "temp") %>%
+  separate("1970", into = paste0("1970_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("1980", into = paste0("1980_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("1990", into = paste0("1990_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("2000", into = paste0("2000_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  separate("2010", into = paste0("2010_", names(brown_acs)[c(2, 6, 15:24)]), sep = "_", convert = T) %>%
+  mutate(`1980_hu_pchange` = (`1980_hu` - `1970_hu`) / `1970_hu`,
+         `1990_hu_pchange` = (`1990_hu` - `1980_hu`) / `1980_hu`,
+         `2000_hu_pchange` = (`2000_hu` - `1990_hu`) / `1990_hu`,
+         `2010_hu_pchange` = (`2010_hu` - `2000_hu`) / `2000_hu`) 
+
+brown_neighborhood <- brown_acs %>% 
+  group_by(REGION, YEAR) %>%
+  summarize(pop = sum(pop, na.rm = T),
+            nhwht = sum(nhwht, na.rm = T),
+            nhblk = sum(nhblk, na.rm = T),
+            asian = sum(asian, na.rm = T),
+            hu = sum(hu, na.rm = T),
+            vac = sum(vac, na.rm = T),
+            ohu = sum(ohu, na.rm = T),
+            rent = sum(rent, na.rm = T),
+            hisp = sum(hisp, na.rm = T),
+            land_area = sum(land_area, na.rm = T)) %>%
+  mutate(pwhite = nhwht/pop,
+       pblack = nhblk/pop,
+       pasian = asian/pop,
+       phisp = hisp/pop,
+       pohu = ohu/hu,
+       pown = rent/hu,
+       pop_d_h = pop/hu,
+       pop_d_l = pop/land_area,
+       h_d_pop = hu/pop,
+       h_d_land = hu/land_area)
+
+brown_neighborhood_plot <- brown_neighborhood %>% select(names(brown_neighborhood)[c(1:3, 7, 13:22)]) %>%
+  unite(temp, names(brown_neighborhood)[c(3, 7, 13:22)]) %>%
+  spread(key = "YEAR", value = "temp") %>%
+  separate("1970", into = paste0("1970_", names(brown_neighborhood)[c(3, 7, 13:22)]), sep = "_", convert = T) %>%
+  separate("1980", into = paste0("1980_", names(brown_neighborhood)[c(3, 7, 13:22)]), sep = "_", convert = T) %>%
+  separate("1990", into = paste0("1990_", names(brown_neighborhood)[c(3, 7, 13:22)]), sep = "_", convert = T) %>%
+  separate("2000", into = paste0("2000_", names(brown_neighborhood)[c(3, 7, 13:22)]), sep = "_", convert = T) %>%
+  separate("2010", into = paste0("2010_", names(brown_neighborhood)[c(3, 7, 13:22)]), sep = "_", convert = T) %>%
+  mutate(`1980_hu_change` = (`1980_hu` - `1970_hu`),
+         `1990_hu_change` = (`1990_hu` - `1980_hu`),
+         `2000_hu_change` = (`2000_hu` - `1990_hu`),
+         `2010_hu_change` = (`2010_hu` - `2000_hu`),
+         `1990_2010_hu_change` = (`2010_hu` - `1990_hu`)) %>%
+
+########### MERGE EVERYTHING TOGETHER ############3
+left_join(zoning_plot[which(zoning_plot$YEAR == 2019),], by = "REGION") %>%
+left_join(permits_collapsed)
+
+neighborhood_price_dem <- inner_join(zhvi_trim, brown_neighborhood_plot, by = c("RegionID" = "REGION")) %>%
+                          mutate(hu_pchange_from_1990 = (`2010_hu` - `1990_hu`) / `1990_hu`,
+                                 pwhite_from_1990 = (`2010_pwhite` - `1990_pwhite`) / `1990_pwhite`,
+                                 ppop_from_1990 = (`2010_pop` - `1990_pop`) / `1990_pop`,
+                                 pop_bins = cut(`2010_pop`, breaks = seq(0, 100000, 25000), include.lowest = TRUE))
+
+############ MERGE TRACT SHAPEFILE TO CENSUS DATA ################
+tract_2010 <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2010"), layer = "geo_export_52dfa5f1-1eaf-49e1-9862-1998098d508c") %>%
+  sp::merge(brown_spread, by.x = "geoid10", by.y = "trtid10")
+
+############ MERGE NEIGHBORHOOD SHAPEFILE WITH CENSUS DATA
+zillow_shp <- readOGR(here("raw_data", "ZillowNeighborhoods-IL"), layer = "ZillowNeighborhoods-IL")
+zillow_shp <- zillow_shp[which(zillow_shp$City == "Chicago"),]
+zillow_acs <- sp::merge(zillow_shp, brown_neighborhood_plot, by.x = "RegionID", by.y = "REGION")
+```
+
+### Plot 1
+
+This plot is a good first graph because shows the correlations of Home Value, Race, and Population in Chicago's neighborhoods at a single recent snapshot in time. Whiter neighborhoods have less population and more expensive homes. I chose 2010 because that is the latest available Decennial Census data (I could make this graph more current with 2017 5-Year data, but this would be then use different census data than the graphs below). 
+
+```{r Bubble Chart, echo = F, message=F}
+ggplot(neighborhood_price_dem, aes(x = `2010_pwhite`, y = `2010_mean_hvi`, size = `2010_pop`, col = pop_bins)) +
+  geom_point(alpha = .7) +
+  labs(
+      title="Chicago's Whitest Neighborhoods: Expensive Homes and Low Populations",
+      subtitle="Average Home Values and Demographic Data in 2010 ",
+      caption="Zillow and American Community Survey Data",
+      x="White Percentage of Population",
+      y="Average Home Value in 2010",
+      color = "Neighborhood Population"
+      ) +
+  theme_classic() +
+  scale_color_manual(labels = c("0-25k", "25-50k", "50-57k", "75-100k"), values = brewer.pal(n = 4, name = "Set2")) +
+  scale_size(guide = "none") +
+  scale_y_continuous(labels = c("$100k", "$200k", "$300k", "$400k", "$500k")) +
+  theme(legend.position = c(.22, .7), legend.background = element_rect(linetype = 1, size = 0.1, colour = 1))
+```
+
+### Plot 2
+
+This next plot shows how neighborhoods have become more or less expensive relative to other neighborhoods over time. The 4 highlighted districts have experienced the most change, with blue being a rise in home value ranking, and red being a fall. These highlights create an opportunity for case studies, perhaps in the future I could highlight the neighborhoods in the other plots to see what may be driving these changes.
+
+```{r Line Graph, Changing Neighborhood Rank, echo = F, message=F}
+
+zhvi_trim <- zhvi_clean %>% filter(YEAR == max(zhvi_clean$YEAR) | YEAR == min(zhvi_clean$YEAR)) %>%
+        unite(temp, c("mean_hvi", "mean_rank")) %>%
+        spread(key = "YEAR", value = temp) %>% 
+        separate("1996", into = paste0("1996_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        separate("2018", into = paste0("2018_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        mutate(change_rank = `2018_mean_rank` - `1996_mean_rank`,
+               change_hvi = `2018_mean_hvi` - `1996_mean_hvi`)
+
+up_neigh <- zhvi_trim$RegionID[order(zhvi_trim$change_rank, decreasing = T)] %>% head(2)
+down_neigh <- zhvi_trim$RegionID[order(zhvi_trim$change_rank, decreasing = T)] %>% tail(2)
+changing_neigh <- append(up_neigh, down_neigh)
+losing_neigh <- zhvi_trim$RegionID[which(zhvi_trim$change_rank < 0)]
+
+zhvi_clean %>%
+  mutate(lost_rank = ifelse(RegionID %in% losing_neigh, -1, 1)) %>%
+ggplot(aes(x = YEAR, y = mean_rank, group = RegionID)) +
+  geom_line(aes(col = lost_rank)) +
+  gghighlight(RegionID %in% changing_neigh, label_key = RegionName, unhighlighted_colour = ggplot2::alpha("grey", 0.4)) +
+          labs(
+          title="Logan Square and Bowmanville Now Among Most Expensive Neighborhoods",
+          subtitle="Neighborhood Rank by Average Home Value",
+          caption="Zillow",
+          x="Year",
+          y="Neighborhood Rank (lower = $$$)"
+          ) +
+          theme_classic() +
+          scale_colour_gradient2(low = scales::muted("blue"), high = scales::muted("red")) +
+          scale_y_reverse()
+```
+
+### Plot 3
+
+This next plot shows how the spatial distribution of the white population in Chicago has changed since 1970. From 1970-2000, many census tracts changed from majority to non-majority white. Only in 2010 is there an observable resurgence in white majority tracts, specifically in the Northern half of the city. It will be interesting in future visualizations to see how other variables are changing in these increasing-white-percentage tracts. Note: I used tmap for these visualizations, which then constrained me to use the grid package for displaying multiple plots. This limited my ability to aadd a caption. In the future, I will switch to ggplot functions.
+
+```{r Map of White Pop, echo = F, message=F}
+plot_time <- function(x, title, show = FALSE, legend = FALSE){
+   plot <- tm_shape(tract_2010) + 
+                      tm_fill(col = x, 
+                              title = "Percentage White",
+                              breaks = c(0, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1),
+                              palette = brewer.pal(9, "Blues")) + 
+                      tm_borders(alpha = 0.1) + 
+                      tm_layout(
+                                legend.show = show,
+                                legend.only = legend,
+                                legend.position = c(0.5, "bottom"),
+                                scale=2, 
+                                main.title = title, 
+                                main.title.position = "center", frame = FALSE)
+   return(plot)
+  }
+
+a <- plot_time("1970_pwhite", "1970")
+b <- plot_time("1980_pwhite", "1980")
+c <- plot_time("1990_pwhite", "1990")
+d <- plot_time("2000_pwhite", "2000")
+e <- plot_time("2010_pwhite", "2010")
+f <- plot_time("2010_pwhite", "2010", TRUE, TRUE)
+
+grid.newpage()
+page.layout <- grid.layout(nrow = 4, ncol = 2, widths=c(.5, .5), heights=c(.1, .3, .3, .3))
+pushViewport(viewport(layout = page.layout))
+
+grid.text("Spatial Distribution of White Population in Chicago", vp = viewport(layout.pos.row = 1, layout.pos.col = 1:2))
+print(a, vp=viewport(layout.pos.row = 2, layout.pos.col = 1))
+print(b, vp=viewport(layout.pos.row = 2, layout.pos.col = 2))
+print(c, vp=viewport(layout.pos.row = 3, layout.pos.col = 1))
+print(d, vp=viewport(layout.pos.row = 3, layout.pos.col = 2))
+print(e, vp=viewport(layout.pos.row = 4, layout.pos.col = 1))
+print(f, vp=viewport(layout.pos.row = 4, layout.pos.col = 2))
+```
+
+### Plot 4
+This next plot was rather ill-fated, and likely won't survive the next draft. I wanted to show that the phenomenom of "Upzoning", or changing the density allowance for a property parcel, is more common among neighborhoods with middling home values. I didn't want to use another scatter/bubble, so I tried making a heat map. I binned the continuous x and y variables, but then realized that certain bins with no values are excluded entirely from the plot. This means the scales are not changing in predictable ways.
+
+```{r Heatmap: Home Value and Upzones, echo = F, message=F}
+neighborhood_price_dem %>%
+  select("UPZONE_cs", `2018_mean_hvi`) %>%
+  mutate(hvi_bin = cut(`2018_mean_hvi`, seq(0, 650000, 25000), include.lowest = T),
+         upzone_bin = cut(UPZONE_cs, c(0, 1, seq(5, 90, 5)), include.lowest = T)) %>%
+  ggplot(aes(hvi_bin, upzone_bin)) +
+  geom_bin2d() +
+  scale_fill_gradientn(colors = brewer.pal(9, "Blues")[3:9]) +
+    labs(
+      title="Upzoning More Common in Neighborhoods with Middling Home Value",
+      subtitle="Average Home Values and Zoning Data in 2018 ",
+      caption="Zillow and Chicago Cityscape Data",
+      x="Binned Home Value (Not to Scale)",
+      y="Binned # of Upzoned Parcels (Not to Scale)",
+      fill = "Neighborhoods"
+      ) +
+  theme_classic() +
+  theme(panel.background = element_rect(fill = brewer.pal(9, "Blues")[1])) +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(), 
+        axis.text.y=element_blank(),
+        axis.ticks.y=element_blank()) +
+  theme(legend.position = c(.93, .8))
+```
+
+### Plot 5
+This final plot shows changes in housing supply for neighborhoods between 1990-2010. Neighborhoods with increasing supply are downtown and in the Northwest of Chicago, while neighborhods in the south are mostly losing housing stock. Increases in housing stock, especially in higher economic activity neighborhoods, is likely an important factor in keeping neighorhoods diverse and housing costs lower.
+
+```{r Change in Housing Map, echo = F, message=F}
+tm_shape(zillow_acs) + 
+                      tm_fill(col = "1990_2010_hu_change", 
+                              title = "Change in Housing",
+                              breaks = c(seq(-4000, 4000, 1000), 17000),
+                              palette = "RdBu") + 
+                      tm_borders() + 
+                      tm_layout(attr.outside = TRUE, 
+                                legend.outside = TRUE, 
+                                legend.position = c(0.6, "bottom"), 
+                                legend.title.size = 1, 
+                                legend.outside.size = 0.2, 
+                                title.snap.to.legend = TRUE, 
+                                main.title = "New Housing Concentrated in Downtown and Northwest Chicago",
+                                main.title.size = 1,
+                                frame = FALSE, 
+                                title = "Change in Housing Supply: 1990-2010",
+                                title.size = .8)
+
+```
+
+
+```{r}
+tract_2010 <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2010"), layer = "geo_export_52dfa5f1-1eaf-49e1-9862-1998098d508c")
+
+tract_2010@data$id <- rownames(tract_2010@data)
+map_data <- fortify(tract_2010)
+map_data %<>% left_join(tract_2010@data, by = "id")
+map_data$geoid10 %<>% as.character()
+brown_acs$trtid10 %<>% as.character()
+map_data %<>% full_join(brown_acs, by = c("geoid10" = "trtid10")) %>% full_join(zillow_shp@data, by = c("REGION" = "RegionID"))
+
+map_data %>%
+  filter(map_data$Name != "O'Hare International Airport" & YEAR == 2010) %>%
+ggplot(aes(x = long, y = lat)) +
+  geom_polygon(aes(fill = `pwhite`,
+                   group = geoid10)) + 
+    gghighlight(REGION %in% changing_neigh, label_key = RegionName, unhighlighted_colour = ggplot2::alpha("grey", 0.4)) +
+        geom_path(data = neighborhood_data, aes(group = group), 
+              color = "black", size = 0.1, alpha = 0.5) +
+      coord_equal() +
+  #facet_wrap(~YEAR) +
+  scale_fill_gradientn(colors = c('#ffffe0','#ffd59b','#ffa474','#f47461','#db4551','#b81b34','#8b0000')) +
+   labs(x = NULL, 
+         y = NULL, 
+         title = "Chicago's Changing White Population", 
+         caption = "ACS") +
+    theme_minimal() +
+    theme(axis.line = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) 
+```
+
