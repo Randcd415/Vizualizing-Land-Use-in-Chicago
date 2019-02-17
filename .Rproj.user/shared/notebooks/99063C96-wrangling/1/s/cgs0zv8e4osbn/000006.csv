@@ -1,9 +1,0 @@
-"0","fhfa <- mutate(fhfa, annual_change = as.numeric(annual_change),
-                     hpi = as.numeric(hpi),
-                     hpi1990 = as.numeric(hpi1990),
-                     hpi2000 = as.numeric(hpi2000))
-"
-"2","NAs introduced by coercion"
-"2","NAs introduced by coercion"
-"2","NAs introduced by coercion"
-"2","NAs introduced by coercion"

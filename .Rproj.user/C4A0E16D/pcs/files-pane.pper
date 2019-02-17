@@ -1,5 +1,5 @@
 {
-    "path" : "~/Harris MPP/Q5/Data Viz/project_chicago_zoning/clean_data",
+    "path" : "~/Harris MPP/Q5/Data Viz/project_chicago_zoning/raw_data/Boundaries - City",
     "sortOrder" : [
         {
             "ascending" : true,

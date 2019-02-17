@@ -1,0 +1,3 @@
+"0","acs_wide_2013_2017 <- inner_join(acs_wide_2013_2017, tract_2010_data, by = c(""GEOID""=""geoid10""))
+"
+"2","Column `GEOID`/`geoid10` joining character vector and factor, coercing into character vector"

@@ -1,0 +1,4 @@
+"0","#run regression without contol"
+"0","lm(lwage ~ educ, data = wage) %>%"
+"0","  summary() %>%"
+"0","  tidy()"

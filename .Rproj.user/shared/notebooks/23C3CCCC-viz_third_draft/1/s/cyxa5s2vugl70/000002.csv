@@ -1,0 +1,193 @@
+"0","######### Zoning ############3"
+"0","zoning <- read_csv(here(""clean_data"", ""zoning.csv""), col_names = T) %>%"
+"0","              mutate(YEAR = year(Date),"
+"0","                    REGION = as.character(REGION)) %>%"
+"0","             group_by(REGION, YEAR) %>% "
+"0","              summarize(UPZONE = sum(UPZONE, na.rm = T),"
+"0","                        DOWNZONE = sum(DOWNZONE, na.rm = T),"
+"0","                        LANDMARKED = sum(LANDMARKED, na.rm = T),"
+"0","                        FAR = mean(FAR, na.rm = T))"
+"2","Parsed with column specification:
+cols(
+  OBJECTID = col_integer(),
+  REGION = col_integer(),
+  Date = col_date(format = """"),
+  Zoning = col_character(),
+  FAR = col_double(),
+  LANDMARKED = col_integer(),
+  CREATE_DAT = col_date(format = """"),
+  EDIT_DATE = col_date(format = """"),
+  LAG_FAR = col_double(),
+  UPZONE = col_integer(),
+  DOWNZONE = col_integer()
+)
+"
+"0","zoning <- zoning[order(zoning$REGION, zoning$YEAR),] %>%"
+"0","            group_by(REGION) %>% "
+"0","            mutate(UPZONE_cs = cumsum(UPZONE),"
+"0","                   DOWNZONE_cs = cumsum(DOWNZONE),"
+"0","                   LANDMARKED_cs = cumsum(LANDMARKED))"
+"0","############# PERMITS ####################"
+"0","permits <- read_csv(here(""clean_data"", ""permits.csv""), col_names = T)"
+"2","Parsed with column specification:
+cols(
+  ID = col_integer(),
+  `PERMIT#` = col_integer(),
+  PERMIT_TYPE = col_character(),
+  ISSUE_DATE = col_date(format = """"),
+  ESTIMATED_COST = col_double(),
+  AMOUNT_WAIVED = col_double(),
+  AMOUNT_PAID = col_double(),
+  TOTAL_FEE = col_double(),
+  STREET_NUMBER = col_integer(),
+  `STREET DIRECTION` = col_character(),
+  STREET_NAME = col_character(),
+  SUFFIX = col_character(),
+  WORK_DESCRIPTION = col_character(),
+  LOCATION = col_character(),
+  RegionID = col_integer()
+)
+"
+"0","permits %<>% mutate(YEAR = year(permits$ISSUE_DATE),"
+"0","                    REGION = as.character(RegionID),"
+"0","                    WORK_DESCRIPTION =toupper(WORK_DESCRIPTION))"
+"0","permits <-  permits[order(permits$REGION, permits$YEAR),] %>%"
+"0","                    group_by(REGION, YEAR, PERMIT_TYPE) %>% "
+"0","                    summarize(num_permits = length(ID)) %>%"
+"0","                    group_by(REGION, PERMIT_TYPE) %>% "
+"0","                    mutate(permits_cs = cumsum(num_permits))"
+"0","permits_filt <- read_csv(here(""clean_data"", ""permits_filt.csv""), col_names = T)"
+"2","Parsed with column specification:
+cols(
+  .default = col_logical(),
+  ID = col_integer(),
+  `PERMIT#` = col_integer(),
+  PERMIT_TYPE = col_character(),
+  ISSUE_DATE = col_date(format = """"),
+  ESTIMATED_COST = col_double(),
+  AMOUNT_WAIVED = col_double(),
+  AMOUNT_PAID = col_double(),
+  TOTAL_FEE = col_double(),
+  STREET_NUMBER = col_integer(),
+  `STREET DIRECTION` = col_character(),
+  STREET_NAME = col_character(),
+  SUFFIX = col_character(),
+  WORK_DESCRIPTION = col_character(),
+  LOCATION = col_character(),
+  RegionID = col_integer(),
+  YEAR = col_integer(),
+  REGION = col_integer()
+)
+"
+"2","See spec(...) for full column specifications.
+"
+"0","permits_filt$LATITUDE <- str_split_fixed(permits_filt$LOCATION, "", "", 2)[,1] %>% as.numeric()"
+"0","permits_filt$LONGITUDE <- str_split_fixed(permits_filt$LOCATION, "", "", 2)[,2] %>% as.numeric()"
+"0","permits_filt <- st_as_sf(permits_filt, coords = c(""LONGITUDE"", ""LATITUDE""), crs = 4269)"
+"0","permits_filt$LATITUDE <- str_split_fixed(permits_filt$LOCATION, "", "", 2)[,1] %>% as.numeric()"
+"0","permits_filt$LONGITUDE <- str_split_fixed(permits_filt$LOCATION, "", "", 2)[,2] %>% as.numeric()"
+"0","############# HOME PRICE DATA ########################"
+"0","zhvi <- read_csv(here(""clean_data"", ""zhvi.csv""), col_names = T)"
+"2","Parsed with column specification:
+cols(
+  RegionID = col_integer(),
+  RegionName = col_character(),
+  SizeRank = col_integer(),
+  Date = col_date(format = """"),
+  HVI = col_integer()
+)
+"
+"0","zhvi$RegionID %<>% as.character()"
+"0","missing_vals <- zhvi %>% filter(!is.na(HVI)) %>% group_by(RegionName) %>% summarize(length = length(Date)) %>% subset(length < 272, select = RegionName)"
+"0","zhvi_clean <- zhvi %>% filter(!(RegionName %in% missing_vals$RegionName)) %>% group_by(Date) %>%"
+"0","  mutate(ranking = order(order(HVI, decreasing = T)),"
+"0","         YEAR = year(Date)) %>% ungroup() %>%"
+"0","         group_by(RegionID, RegionName, YEAR) %>%"
+"0","         summarize(mean_hvi = mean(HVI, na.rm = T),"
+"0","                   mean_rank = mean(ranking, na.rm = T))"
+"0","############# ACS DATA FROM BROWN LOGITUDINAL DATABASE ########################"
+"0","acs <- read_csv(here(""clean_data"", ""acs_full.csv""), col_names = T)"
+"2","Parsed with column specification:
+cols(
+  .default = col_double(),
+  YEAR = col_integer(),
+  REGION = col_integer()
+)
+"
+"2","See spec(...) for full column specifications.
+"
+"0","acs %<>% mutate(YEAR = as.numeric(YEAR),"
+"0","                   REGION = as.character(REGION),"
+"0","                   trtid10 = as.character(trtid10))"
+"0","acs_5 <- read_csv(here(""clean_data"", ""acs_2013_2017.csv"")) %>%"
+"0","          group_by(REGION) %>%"
+"0","          summarize(pop = sum(pop_e, na.rm = T),"
+"0","                    nhwht = sum(white_pop_e, na.rm = T),"
+"0","                    nhblk = sum(black_pop_e, na.rm = T),"
+"0","                    asian = sum(asian_pop_e, na.rm = T),"
+"0","                    hisp = sum(hispanic_pop_e, na.rm = T),"
+"0","                    ohu = sum(occupied_e, na.rm = T),"
+"0","                    own = sum(owned_e, na.rm = T),"
+"0","                    hu = sum(housing_e, na.rm = T)) %>%"
+"0","          mutate(pwhite = nhwht/pop,"
+"0","                 pblack = nhblk/pop,"
+"0","                 pasian = asian/pop,"
+"0","                 phisp = hisp/pop,"
+"0","                 pohu = ohu/hu,"
+"0","                 pown = own/ohu,"
+"0","                 pop_d_h = pop/hu,"
+"0","                 h_d_pop = hu/pop,"
+"0","                 YEAR = 2017,"
+"0","                 REGION = as.character(REGION))"
+"2","Parsed with column specification:
+cols(
+  .default = col_integer(),
+  GEOID = col_double(),
+  NAME = col_character(),
+  pop_e = col_double(),
+  owner_pop_e = col_double(),
+  asian_pop_e = col_double(),
+  agg_income_e = col_double(),
+  agg_income_m = col_double(),
+  housing_e = col_double(),
+  owned_e = col_double()
+)
+"
+"2","See spec(...) for full column specifications.
+"
+"0","############ AGGREGATE CENSUS DATA TO TRACT LEVEL ############"
+"0","acs_neighborhood <- acs %>% "
+"0","  group_by(REGION, YEAR) %>%"
+"0","  summarize(pop = sum(pop, na.rm = T),"
+"0","            nhwht = sum(nhwht, na.rm = T),"
+"0","            nhblk = sum(nhblk, na.rm = T),"
+"0","            asian = sum(asian, na.rm = T),"
+"0","            hu = sum(hu, na.rm = T),"
+"0","            vac = sum(vac, na.rm = T),"
+"0","            ohu = sum(ohu, na.rm = T),"
+"0","            own = sum(own, na.rm = T),"
+"0","            hisp = sum(hisp, na.rm = T),"
+"0","            col = sum(col, na.rm = T),"
+"0","            unemp = sum(unemp, na.rm = T),"
+"0","            family = sum(family, na.rm = T),"
+"0","            hinc = mean(hinc, na.rm = T),"
+"0","            h30old = sum(h30old, na.rm = T),"
+"0","            mrent = mean(mrent, na.rm = T),"
+"0","            hincw = mean(hincw, na.rm = T),"
+"0","            hincb = mean(hincb, na.rm = T),"
+"0","            hinch = mean(hinch, na.rm = T),"
+"0","            multi = sum(multi, na.rm = T)) %>%"
+"0","  mutate(pwhite = nhwht/pop,"
+"0","       pblack = nhblk/pop,"
+"0","       pasian = asian/pop,"
+"0","       phisp = hisp/pop,"
+"0","       pohu = ohu/hu,"
+"0","       pown = own/ohu,"
+"0","       pop_d_h = pop/hu,"
+"0","       h_d_pop = hu/pop) %>%"
+"0","  bind_rows(acs_5)"
+"0","master <- acs_neighborhood %>%"
+"0","  full_join(zoning, by = c(""REGION"", ""YEAR"")) %>%"
+"0","  full_join(permits, by = c(""REGION"", ""YEAR""))  %>%"
+"0","  full_join(zhvi_clean, b = c(""REGION"" = ""RegionID"", ""YEAR"")) %>%"
+"0","  filter(!is.na(REGION))"

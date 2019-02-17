@@ -1,0 +1,24 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1550090243540.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "28|38|145|0|\n147|29|185|0|\n187|30|206|0|\n208|32|220|0|\n225|46|262|0|\n268|49|337|0|\n343|38|386|0|\n428|35|433|0|\n435|47|501|0|\n573|52|662|0|\n668|47|719|0|\n",
+    "hash" : "4143855942",
+    "id" : "BD5BC630",
+    "lastKnownWriteTime" : 1550100390,
+    "last_content_update" : 1550100390815,
+    "path" : "~/Harris MPP/Q5/Data Viz/project_chicago_zoning/rand_final_static.Rmd",
+    "project_path" : "rand_final_static.Rmd",
+    "properties" : {
+        "cursorPosition" : "503,10",
+        "last_setup_crc32" : "3BFC84BDdf015034",
+        "scrollLine" : "423",
+        "tempName" : "Untitled1"
+    },
+    "relative_order" : 3,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_markdown"
+}

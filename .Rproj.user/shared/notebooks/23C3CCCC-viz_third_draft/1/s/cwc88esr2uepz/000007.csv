@@ -1,0 +1,39 @@
+"0","plot_data1[order(plot_data1$REGION, plot_data1$YEAR),] %>%
+  ggplot(aes(x = construction, y = demolition, group = REGION, col = factor(REGION))) +
+  geom_point(alpha = 0.7) +
+  geom_path(alpha = 0.7) +
+  labs(x = ""Cumulative Construction Permits (per # of houses in 2010)"",
+         y = ""Cumulative Demolition Permits (per # of houses in 2010)"", 
+         title = ""More Building Activity in Increasing Value Neighborhoods"",
+         subtitle = ""Cumulative Constructions and Demolitions (Scaled to Neighborhood Housing Stock)"",
+         caption = ""Data From City of Chicago Data Portal"") +
+  scale_color_manual(values = c(""#00856B"", ""#00BF9A"", ""#C94211"", ""#FF5416"")) +
+  geom_label(data = plot_data1[which(plot_data1$YEAR == 2015 & plot_data1$RegionName != ""Garfield Ridge""),], 
+             aes(x = construction, 
+                 y = demolition, 
+                 col = factor(REGION), 
+                 label = RegionName),
+                 nudge_y = 0.002,
+                 family = ""Segoe UI Bold"",
+                 alpha = 0.7) +
+  geom_text(data = plot_data1[which(plot_data1$YEAR == 2018 & plot_data1$RegionName != ""Dunning""),], 
+            aes(x = construction, 
+                y = demolition, 
+                label = YEAR), 
+            col = ""black"",
+            nudge_y = .0012,
+            alpha = .6) +
+  coord_fixed(ratio = .65) +
+  annotate(""label"", label=""Garfield Ridge"", x=.0073, y=.0015, alpha = .6, family=""Segoe UI Bold"", col = ""#00856B"") +
+  annotate(""text"", label=""2018"", x=.0148, y=.00674, alpha = .6, family=""Segoe UI Bold"") +
+    annotate(""text"", label=""2005"", x=0, y=.0015, alpha = .6, family=""Segoe UI Bold"") +
+  theme_classic() +
+  theme(legend.position = ""none"",
+        plot.title = element_text(size = 2),
+        plot.subtitle = element_text(size = 1.5)) +
+  theme_custom
+"
+"2","Warning message:
+"
+"2","Unknown or uninitialised column: 'highlight'. 
+"

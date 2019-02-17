@@ -1,0 +1,9 @@
+"0","acs_grouped_present <- group_by(acs_2013_2017, WARD) %>%
+                          summarize(pop = sum(pop_e, na.rm = T),
+                                    white = sum(white_pop_e, na.rm = T)) %>%
+                          mutate(p_white = white/pop,
+                                 white_maj = ifelse(acs_grouped_present$p_white > .8, ""Yes"", ""No""))
+"
+"2","Error in mutate_impl(.data, dots) : 
+  Evaluation error: object 'acs_grouped_present' not found.
+"
