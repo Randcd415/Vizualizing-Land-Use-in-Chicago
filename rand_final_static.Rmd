@@ -406,7 +406,7 @@ ggplot() +
              col = "#00B28F", 
              alpha = .6) +
   labs(
-      title="In 2017, Whitest Neighborhoods have Expensive Homes and Low Populations",
+      title=" 2017, Whitest Neighborhoods have \nExpensive Homes and Low Populations",
       #subtitle="Average Home Values and Demographic Data in 2017 ",
       caption="Data from Zillow and American Community Survey",
       x="2017 White Percentage of Population",
@@ -593,44 +593,13 @@ box <- st_geometry(box)
 box <- st_set_crs(box, st_crs(chicago_border))
 chicago_crop <- st_intersection(chicago_border, box)
 permits_res <- st_intersection(permits_res, chicago_border)
+neighborhood_crop <- st_intersection(zillow_shp, box)
 
-# mat <- list(matrix(c(-87.62, 41.89,
-#                      -87.72, 41.89,
-#                      -87.72, 41.965,
-#                      -87.62, 41.965,
-#                      -87.62, 41.89
-#                      ),
-#               ncol = 2,
-#               byrow = TRUE))
-# box <- st_polygon(mat)
-# box <- st_geometry(box)
-# box <- st_set_crs(box, st_crs(chicago_border))
-# chicago_super_crop <- st_intersection(chicago_border, box)
-# permits_super_res <- st_intersection(permits_res, chicago_super_crop)
-# permits_super_res <- st_intersection(permits_res, chicago_super_crop)
-# 
-# 
-# ggplot() +
-#     geom_sf(data = chicago_super_crop,
-#             fill = "white") +
-#   geom_point(data = permits_super_res,
-#            aes(x = LONGITUDE, y = LATITUDE, col = WRECK),
-#            alpha =.8,
-#            size = 0.1)
+library(geojsonsf)
+waterways <- geojson_sf("c://Users/7450/Documents/Harris MPP/Q5/Data Viz/d3_project/waterways.geojson")
+waterways <- st_set_crs(waterways, st_crs(chicago_border))
+waterways_crop <- st_intersection(waterways, chicago_border)
 
-# mat <- list(matrix(c(-87, 41.66,
-#                      -88, 41.66,
-#                      -88, 43,
-#                      -87, 43,
-#                      -87, 41.66
-#                      ),
-#               ncol = 2,
-#               byrow = TRUE))
-# box <- st_polygon(mat)
-# box <- st_geometry(box)
-# box <- st_set_crs(box, st_crs(chicago_border))
-# chicago_crop <- st_intersection(chicago_border, box)
-# permits_super_res <- st_intersection(permits_res, chicago_crop)
 
 ggplot() +
     geom_point(data = permits_res, 
@@ -717,5 +686,43 @@ test$geometry <- NULL
           panel.grid.major = element_blank(),
           panel.grid.minor = element_blank(),
           legend.position = c(.8, .2))
+```
+
+```{r d3_subset, include = F}
+
+plot_data <- master %>%
+  filter(YEAR == 2017, pop > 0 & pop < 2000000) %>% 
+  mutate(pop_bins = cut(pop, breaks = seq(0, 99000, 33000), include.lowest = TRUE),
+         pop = pop)
+
+d3_data <- plot_data %>%
+            filter(!is.na(mean_hvi)) %>%
+            select(c("REGION", "pwhite", "mean_hvi", "pop")) %>%
+            mutate(maj_white = (ifelse(pwhite > 0.5, 1, 0)),
+                   maj_white = factor(maj_white)) %>%
+            select(c("REGION", "mean_hvi", "pop", "maj_white"))
+
+d3_data_sub <- d3_data[sample(nrow(d3_data), 30),]  
+
+
+library(jsonlite)
+write_json(d3_data_sub, "C:/Users/7450/Documents/Harris MPP/Q5/Data Viz/d3_project/scatter_data.json")     
+```
+
+```{r d3_permits}
+library(geojsonsf)
+library(geojsonio)
+library(jsonlite)
+
+geo <- sf_geojson(chicago_crop)
+topo_geo <- geo2topo(geo)
+
+write_json(permits_res, "C:/Users/7450/Documents/Harris MPP/Q5/Data Viz/d3_project/permits_res.json")  
+
+geojson_write(geo, file = "C:/Users/7450/Documents/Harris MPP/Q5/Data Viz/d3_project/chicago.geojson")
+
+geojson_write(neighborhood_crop, file = "C:/Users/7450/Documents/Harris MPP/Q5/Data Viz/d3_project/neighborhoods.geojson")
+
+geojson_write(waterways_crop, file = "C:/Users/7450/Documents/Harris MPP/Q5/Data Viz/d3_project/waterways.geojson")
 ```
 

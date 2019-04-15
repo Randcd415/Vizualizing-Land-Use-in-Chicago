@@ -1,0 +1,521 @@
+---
+title: "What Does a Whiter Chicago Look Like?"
+author: "Cory Rand"
+date: "April 14, 2019"
+output:
+  html_document:
+    code_folding: hide
+  pdf_document: default
+---
+
+```{r Setup, include = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(RColorBrewer)
+library(gghighlight)
+library(lubridate)
+library(tidyverse)
+library(here)
+library(magrittr)
+library(tmap)
+library(grid)
+library(rgdal)
+library(gridExtra)
+library(extrafont)
+library(sf)
+library(scales)
+
+invisible(loadfonts())
+```
+
+```{r Read and Prep Data, include = F}
+######### Zoning ############3
+zoning <- read_csv(here("clean_data", "zoning.csv"), col_names = T) %>%
+              mutate(YEAR = year(Date),
+                    REGION = as.character(REGION)) %>%
+             group_by(REGION, YEAR) %>% 
+              summarize(UPZONE = sum(UPZONE, na.rm = T),
+                        DOWNZONE = sum(DOWNZONE, na.rm = T),
+                        LANDMARKED = sum(LANDMARKED, na.rm = T),
+                        FAR = mean(FAR, na.rm = T))
+
+zoning <- zoning[order(zoning$REGION, zoning$YEAR),] %>%
+            group_by(REGION) %>% 
+            mutate(UPZONE_cs = cumsum(UPZONE),
+                   DOWNZONE_cs = cumsum(DOWNZONE),
+                   LANDMARKED_cs = cumsum(LANDMARKED))
+
+############# PERMITS ####################
+permits <- read_csv(here("clean_data", "permits.csv"), col_names = T)
+
+permits %<>% mutate(YEAR = year(permits$ISSUE_DATE),
+                    REGION = as.character(RegionID),
+                    WORK_DESCRIPTION =toupper(WORK_DESCRIPTION))
+
+permits <-  permits[order(permits$REGION, permits$YEAR),] %>%
+                    group_by(REGION, YEAR, PERMIT_TYPE) %>% 
+                    summarize(num_permits = length(ID)) %>%
+                    group_by(REGION, PERMIT_TYPE) %>% 
+                    mutate(permits_cs = cumsum(num_permits))
+
+permits_filt <- read_csv(here("clean_data", "permits_filt.csv"), col_names = T)
+
+permits_filt$LATITUDE <- str_split_fixed(permits_filt$LOCATION, ", ", 2)[,1] %>% as.numeric()
+permits_filt$LONGITUDE <- str_split_fixed(permits_filt$LOCATION, ", ", 2)[,2] %>% as.numeric()
+permits_filt <- st_as_sf(permits_filt, coords = c("LONGITUDE", "LATITUDE"), crs = 4269)
+permits_filt$LATITUDE <- str_split_fixed(permits_filt$LOCATION, ", ", 2)[,1] %>% as.numeric()
+permits_filt$LONGITUDE <- str_split_fixed(permits_filt$LOCATION, ", ", 2)[,2] %>% as.numeric()
+
+############# HOME PRICE DATA ########################
+zhvi <- read_csv(here("clean_data", "zhvi.csv"), col_names = T)
+zhvi$RegionID %<>% as.character()
+
+missing_vals <- zhvi %>% filter(!is.na(HVI)) %>% group_by(RegionName) %>% summarize(length = length(Date)) %>% subset(length < 272, select = RegionName)
+
+zhvi_clean <- zhvi %>% filter(!(RegionName %in% missing_vals$RegionName)) %>% group_by(Date) %>%
+  mutate(ranking = order(order(HVI, decreasing = T)),
+         YEAR = year(Date)) %>% ungroup() %>%
+         group_by(RegionID, RegionName, YEAR) %>%
+         summarize(mean_hvi = mean(HVI, na.rm = T),
+                   mean_rank = mean(ranking, na.rm = T))
+
+############# ACS DATA FROM BROWN LOGITUDINAL DATABASE ########################
+acs <- read_csv(here("clean_data", "acs_full.csv"), col_names = T)
+
+
+acs %<>% mutate(YEAR = as.numeric(YEAR),
+                   REGION = as.character(REGION),
+                   trtid10 = as.character(trtid10))
+
+acs_5 <- read_csv(here("clean_data", "acs_2013_2017.csv")) %>%
+          group_by(REGION) %>%
+          summarize(pop = sum(pop_e, na.rm = T),
+                    nhwht = sum(white_pop_e, na.rm = T),
+                    nhblk = sum(black_pop_e, na.rm = T),
+                    asian = sum(asian_pop_e, na.rm = T),
+                    hisp = sum(hispanic_pop_e, na.rm = T),
+                    ohu = sum(occupied_e, na.rm = T),
+                    own = sum(owned_e, na.rm = T),
+                    hu = sum(housing_e, na.rm = T)) %>%
+          mutate(pwhite = nhwht/pop,
+                 pblack = nhblk/pop,
+                 pasian = asian/pop,
+                 phisp = hisp/pop,
+                 pohu = ohu/hu,
+                 pown = own/ohu,
+                 pop_d_h = pop/hu,
+                 h_d_pop = hu/pop,
+                 YEAR = 2017,
+                 REGION = as.character(REGION))
+
+############ AGGREGATE CENSUS DATA TO TRACT LEVEL ############
+acs_neighborhood <- acs %>% 
+  group_by(REGION, YEAR) %>%
+  summarize(pop = sum(pop, na.rm = T),
+            nhwht = sum(nhwht, na.rm = T),
+            nhblk = sum(nhblk, na.rm = T),
+            asian = sum(asian, na.rm = T),
+            hu = sum(hu, na.rm = T),
+            vac = sum(vac, na.rm = T),
+            ohu = sum(ohu, na.rm = T),
+            own = sum(own, na.rm = T),
+            hisp = sum(hisp, na.rm = T),
+            col = sum(col, na.rm = T),
+            unemp = sum(unemp, na.rm = T),
+            family = sum(family, na.rm = T),
+            hinc = mean(hinc, na.rm = T),
+            h30old = sum(h30old, na.rm = T),
+            mrent = mean(mrent, na.rm = T),
+            hincw = mean(hincw, na.rm = T),
+            hincb = mean(hincb, na.rm = T),
+            hinch = mean(hinch, na.rm = T),
+            multi = sum(multi, na.rm = T)) %>%
+  mutate(pwhite = nhwht/pop,
+       pblack = nhblk/pop,
+       pasian = asian/pop,
+       phisp = hisp/pop,
+       pohu = ohu/hu,
+       pown = own/ohu,
+       pop_d_h = pop/hu,
+       h_d_pop = hu/pop) %>%
+  bind_rows(acs_5)
+
+master <- acs_neighborhood %>%
+  full_join(zoning, by = c("REGION", "YEAR")) %>%
+  full_join(permits, by = c("REGION", "YEAR"))  %>%
+  full_join(zhvi_clean, b = c("REGION" = "RegionID", "YEAR")) %>%
+  filter(!is.na(REGION))
+```
+
+```{r wide_data, include = F}
+### zoning
+zoning_wide <- zoning[which(zoning$YEAR == 2019),]
+
+### permits
+permits_wide <- permits %>% 
+                  spread(key = PERMIT_TYPE, value = permits_cs) %>%
+                  group_by(REGION) %>% 
+                  summarize(con_permits_cs = max(`PERMIT - NEW CONSTRUCTION`, na.rm = T),
+                            des_permits_cs = max(`PERMIT - WRECKING/DEMOLITION`, na.rm = T))
+
+### home value
+zhvi_wide <- zhvi_clean %>% 
+        filter(YEAR == 1996 | YEAR == 2010 | YEAR == 2018) %>%
+        unite(temp, c("mean_hvi", "mean_rank")) %>%
+        spread(key = "YEAR", value = temp) %>% 
+        separate("1996", into = paste0("1996_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        separate("2010", into = paste0("2010_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        separate("2018", into = paste0("2018_", c("mean_hvi", "mean_rank")), sep = "_", convert = T) %>%
+        mutate(change_rank = `2018_mean_rank` - `1996_mean_rank`,
+               change_hvi = `2018_mean_hvi` - `1996_mean_hvi`)
+
+### acs data
+acs_wide <- acs_neighborhood %>% 
+  subset(subset = (YEAR == 1970 | YEAR == 1980 | YEAR == 1990 | YEAR ==  2000 | YEAR ==  2010 | YEAR == 2017)) %>% 
+  unite(temp, names(acs_neighborhood)[3:29]) %>% 
+  spread(key = "YEAR", value = "temp") %>% 
+  separate("1970", into = paste0("1970_", names(acs_neighborhood)[3:29]), sep = "_", convert = T) %>%
+  separate("1980", into = paste0("1980_", names(acs_neighborhood)[3:29]), sep = "_", convert = T) %>%
+  separate("1990", into = paste0("1990_", names(acs_neighborhood)[3:29]), sep = "_", convert = T) %>%
+  separate("2000", into = paste0("2000_", names(acs_neighborhood)[3:29]), sep = "_", convert = T) %>%
+  separate("2010", into = paste0("2010_", names(acs_neighborhood)[3:29]), sep = "_", convert = T) %>%
+  separate("2017", into = paste0("2017_", names(acs_neighborhood)[3:29]), sep = "_", convert = T)
+
+master_wide <- acs_wide %>%
+full_join(zoning_wide, by = "REGION") %>%
+full_join(permits_wide) %>%
+full_join(zhvi_wide, by = c("REGION" = "RegionID"))
+```
+
+```{r Shapefiles, include = F}
+############ Merge Tract SHAPEFILE WITH MASTER
+tract_2010 <- readOGR(here("raw_data", "Boundaries - Census Tracts - 2010"), layer = "geo_export_52dfa5f1-1eaf-49e1-9862-1998098d508c")
+tract_2010@data$geoid10 %<>% as.character()
+
+
+############ MERGE Neighborhood Shapefile WITH MASTERS
+zillow_shp <- readOGR(here("raw_data", "ZillowNeighborhoods-IL"), layer = "ZillowNeighborhoods-IL")
+zillow_shp$RegionID %<>% as.character()
+zillow_shp@data$id <- rownames(zillow_shp@data)
+zillow_shp <- zillow_shp[which(zillow_shp$City == "Chicago"),]
+
+neighborhood_master <- fortify(zillow_shp) %>%
+                     full_join(zillow_shp@data, by = "id") %>% 
+                     full_join(master, by = c("RegionID" = "REGION"))
+
+neighborhood_master_wide <- fortify(zillow_shp) %>%
+                     full_join(zillow_shp@data, by = "id") %>% 
+                     full_join(master_wide, by = c("RegionID" = "REGION"))
+```
+
+```{r Custom Theme, include = F}
+theme_custom <-   theme(plot.title = element_text(family="Segoe UI Semibold", size=13.5),
+        plot.subtitle = element_text(family="Segoe UI Light", size=11),
+        plot.caption = element_text(family="Segoe UI Light", size=9),
+        axis.title=element_text(family="Segoe UI Semibold", size=10),
+        axis.text=element_text(family="Segoe UI Light", size=10),
+        legend.title=element_text(family="Segoe UI Semibold", size=9),
+        legend.text = element_text(family="Segoe UI Light", size=9),
+        #legend.background=element_blank(),
+        axis.line = element_line(colour = "#616161"),
+        panel.grid.major = element_line(color = "#E5E5E5"),
+        panel.grid.minor = element_line(color = "#EDEDED"))
+```
+
+On April 2, 2019, Chicago’s voters elected Lori Lightfoot as the city’s first female, African-American, and openly-gay mayor. The historic victory, and the Lightfoot campaign’s emphasis on struggling Westside and Southside neighborhoods, occurs amidst a stark demographic shift. Over the last 20 years, the city has gained more than half a million new white residents while Chicago’s minority populations have fallen or held steady. 
+```{r Demographics Line, message=F, warning=F}
+demo_graph_data <- master %>%
+  select(REGION, YEAR, nhwht, nhblk, asian, hisp) %>%
+  distinct() %>%
+  group_by(YEAR) %>%
+  summarize(White = sum(nhwht, na.rm = T),
+            Black = sum(nhblk, na.rm = T),
+            Asian = sum(asian, na.rm = T),
+            Hispanic = sum(hisp, na.rm = T)) %>%
+  filter(White != 0, YEAR > 1970) %>%
+  gather(key = "Race", value = "Pop", -c(YEAR))
+
+demo_graph_data$Pop[demo_graph_data$Pop == 0] <- NA
+
+  ggplot(demo_graph_data, aes(x = YEAR, y = Pop, col = Race)) +
+  scale_color_manual(values= c("#D60000", "#FF5416","#E49DE8", "#00B28F")) +
+  scale_y_continuous(labels = comma) +
+  geom_point(size = 2, alpha = 0.7) +
+  geom_smooth(linetype = "dashed", size = 0.5, alpha = 0.5) +
+  labs(
+  title="Chicago's White Population Up, Minorities Down or Steady",
+  subtitle="Populations by Race: 1970-2017 (lines are imputed)",
+  caption="Data from American Community Survey",
+  x="Year",
+  y="Population"
+  ) +
+  # geom_rect(xmin = 1999, xmax = 2018, 
+  #           ymin = 100000, ymax = 1400000, 
+  #           alpha = 0, color = "grey", size = 1) +
+  annotate("text", label="White", x=1980, y=1370000, size=3.5, color = "#00B28F", family="Segoe UI Semibold") +
+  annotate("text", label="Black", x=1980, y=1075000, size=3.5, color = "#FF5416", family="Segoe UI Semibold") +
+  annotate("text", label="Asian", x=1980, y=195000, size=3.5, color = "#D60000", family="Segoe UI Semibold") +
+  annotate("text", label="Hispanic", x=1980.5, y=501000, size=3.5, color = "#E49DE8", family="Segoe UI Semibold") +
+    theme_classic() +
+  theme_custom +
+      theme(legend.position="none") 
+```
+
+```{r sf shpfile work, include = F}
+zillow_shp <- st_read(here("raw_data", "ZillowNeighborhoods-IL", "ZillowNeighborhoods-IL.shp")) %>% filter(City == "Chicago")
+zillow_shp <- st_transform(zillow_shp, st_crs(permits_filt))
+chicago_border <- st_read(here("raw_data", "Boundaries - City", "geo_export_134f95af-a44f-4415-bac3-40dc9ceb98dc.shp"))
+chicago_border <- transform(chicago_border, st_crs(permits_filt))
+```
+
+Since 2000, most neighborhoods have become less black and more white. The plot below shows the percentage change in each neighborhood’s black and white populations between 2000 and 2017, represented as coordinates on a graph. The majority of Chicago’s neighborhoods cluster on the lower right quadrant, signaling an increase in white resident percentage (X axis) and a decrease in black resident percentage (Y axis). 
+```{r Demographics scatter, message=F, warning=F, fig.width=8}
+plot_data <- neighborhood_master_wide %>%
+    mutate(pblack_2000_2017 = (`2017_pblack` - `2000_pblack`)* 100,
+           pwhite_2000_2017 = (`2017_pwhite` - `2000_pwhite`)* 100) %>%
+  subset(subset = RegionID != "403159" & !is.na(pwhite_2000_2017), select=c(long, lat, group, RegionID, pwhite_2000_2017, pblack_2000_2017)) %>%
+  left_join(zillow_shp[, c("RegionID", "Name")]) %>%
+  distinct(RegionID, .keep_all = T) %>%
+  mutate(highlight = pwhite_2000_2017 > 0 & pblack_2000_2017 < 0) 
+
+p1 <- plot_data %>%
+ggplot(aes(x = pwhite_2000_2017, y = pblack_2000_2017, label = Name, col = highlight)) +
+ annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf, fill= "grey", alpha = 0.1)  +
+ annotate("rect", xmin = 0, xmax = Inf, ymin = 0, ymax = Inf, fill= "grey", alpha = 0.1)  +
+  geom_jitter(alpha = 0.5) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  geom_text(data = plot_data[which(plot_data$pwhite_2000_2017 > 20 & plot_data$pblack_2000_2017 < -35),], 
+            aes(x = pwhite_2000_2017, y = pblack_2000_2017, label = Name), 
+            size = 3.2,
+            nudge_y = -2.5,
+            family="Segoe UI Bold", 
+            color = "black",
+            alpha = .6) +
+  annotate("text", label="Near West Side", x=29.8, y=-30, alpha = .6, size=3.2, family="Segoe UI Bold") +
+  scale_color_manual(values = c("#FF5416", "#00B28F")) +
+       labs(x = "Percentage Point Change in White Population", 
+          y = "Percentage Point Change in Black Population", 
+          title = "Most Neighborhoods are Less Black, More White than in 2000",
+          subtitle = "Neighborhood Demographic Change: 2000-2017",
+          caption = "Data from American Community Survey") +
+    theme_classic() +
+  theme_custom +
+   theme(axis.line = element_blank()) +
+    theme(legend.position="none") 
+
+temp_data <- neighborhood_master_wide %>%
+    mutate(pblack_2000_2017 = `2017_pblack` - `2000_pblack`,
+           pwhite_2000_2017 = `2017_pwhite` - `2000_pwhite`) %>%
+  subset(subset = RegionID != "403159" & !is.na(pwhite_2000_2017), select=c(long, lat, group, RegionID, pwhite_2000_2017, pblack_2000_2017)) %>%
+  left_join(zillow_shp[, c("RegionID", "Name")]) %>%
+  mutate(highlight = pwhite_2000_2017 > 0 & pblack_2000_2017 < 0)
+
+highlight <- temp_data$RegionID[temp_data$highlight == TRUE]
+
+p2 <- ggplot() +
+    geom_sf(data = zillow_shp[(zillow_shp$RegionID %in% highlight) & zillow_shp$RegionID != "403159",], 
+            fill = "#00B28F", 
+            alpha = .8,
+            color = "#C0C0C0") +
+    geom_sf(data = zillow_shp[!(zillow_shp$RegionID %in% highlight) & zillow_shp$RegionID != "403159",],
+            fill = "#FF5416", 
+            alpha = .2,
+            color = "#C0C0C0") +
+    theme_minimal() +
+    coord_sf(datum=NA) +      
+    theme(axis.line = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()) +
+    theme(legend.position="none") 
+
+rm(temp_data)
+grid.newpage()
+page.layout <- grid.layout(nrow = 1, ncol = 2, widths=c(.7, .3))
+pushViewport(viewport(layout = page.layout))
+print(p1, vp=viewport(layout.pos.row = 1, layout.pos.col = 1))
+print(p2, vp=viewport(layout.pos.row = 1, layout.pos.col = 2))
+```
+
+Alongside this demographic shift is a trend of economic divergence. Economic activity and house values have skyrocketed in some neighborhoods, while others have faced deterioration and disinvestment. Using home value index data from Zillow, I show in the plot below how four different neighborhoods, once similar by home value rankings relative to all Chicago neighborhoods, have sharply diverged since 1995.
+```{r, Neighborhood Rank, message=F, warning=F, fig.width=8}
+master_wide_filt <- master_wide[which(!is.na(master_wide$change_rank)),]
+up_neigh <- master_wide_filt$REGION[order(master_wide_filt$change_rank, decreasing = T)] %>% head(2)
+down_neigh <- master_wide_filt$REGION[order(master_wide_filt$change_rank, decreasing = T)] %>% tail(2)
+changing_neigh <- append(up_neigh, down_neigh)
+losing_neigh <- master_wide_filt$REGION[which(master_wide_filt$change_rank < 0)]
+rm(master_wide_filt)
+
+plot_data <- master %>%
+                filter(REGION %in% changing_neigh, YEAR > 1995)
+                
+  
+p1 <- ggplot(data = plot_data, aes(x = YEAR, y = mean_rank, 
+                             col = factor(REGION))) +
+  geom_line(aes(label = RegionName)) +
+          labs(
+          title="Logan Square, Bowmanville Now Among Most Expensive Neighborhoods",
+          subtitle="Neighborhoods that experienced largest change in home value rank",
+          caption="Data from Zillow",
+          x="Year",
+          y="Neighborhood Rank",
+          col = NULL
+          ) +
+  geom_label(data = plot_data[plot_data$YEAR == 2017 &
+                                plot_data$RegionName != "Garfield Ridge",],
+             aes(x = YEAR, y = mean_rank,
+                 col = factor(REGION),
+                 label = RegionName),
+             position = position_nudge(y = 8)) +
+          theme_classic() +
+  guides(col = FALSE) +
+   scale_color_manual(values = c("#C94211", "#FF5416", "#00856B", "#00BF9A")) +     
+          scale_y_reverse(limits = c(125,0)) +
+  annotate("label", label="Garfield Ridge", x=2017, y=100, col = "#FF5416", family="Segoe UI Bold") +
+   annotate("text", label="Most Expensive \nNeighborhoods", 
+            x=1997.6, y=5.8, alpha = .6, family="Segoe UI Bold", size = 3) +
+ annotate("text", label="Least Expensive \nNeighborhoods", 
+          x=1997.6, y=106, alpha = .6, family="Segoe UI Bold", size = 3) +
+            theme_custom 
+
+p2 <- ggplot() +
+    geom_sf(data = zillow_shp[!(zillow_shp$RegionID %in% changing_neigh) & zillow_shp$RegionID != "403159",],
+            col = "grey", alpha = .6) +
+    geom_sf(data = zillow_shp[zillow_shp$RegionID %in% changing_neigh,],
+            aes(fill = factor(RegionID)),
+            col = "grey", alpha = .6) +
+    scale_fill_manual(values = c("#C94211", "#FF5416", "#00856B", "#00BF9A")) +     
+    theme_minimal() +
+    guides(fill = FALSE) +
+    coord_sf(datum=NA) +      
+    theme(axis.line = element_blank(),
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank())
+
+rm(plot_data)
+
+grid.newpage()
+page.layout <- grid.layout(nrow = 1, ncol = 2, widths=c(.7, .3))
+pushViewport(viewport(layout = page.layout))
+print(p1, vp=viewport(layout.pos.row = 1, layout.pos.col = 1))
+print(p2, vp=viewport(layout.pos.row = 1, layout.pos.col = 2))
+```
+
+An additional proxy for neighborhood economic health is residential construction permits. A vibrant neighborhood with high land values may have both residential construction and demolition, as housing stock is torn down and replaced for new residents. Less in-demand neighborhoods may see little to no new construction, and perhaps demolition of vacant or blighted homes. The plot below shows building permits for new residential construction and demolition in Chicago, between 2006 and 2018. The North and Near-West neighborhoods show churn in housing stock, while South and West neighborhoods primarily experience demolition. 
+```{r Construction Pixel Data, message=F, warning=F}
+ permits_filt <- st_join(permits_filt, zillow_shp %>% select, join = st_within)
+
+ permits_res <- permits_filt %>%
+   filter(YEAR > 2005, YEAR < 2019, RESIDENTIAL == 1,
+          SFR==1 | MULTI ==1,
+          BUILD ==1 | WRECK ==1,
+          REGION != "403159")
+
+ mat <- list(matrix(c(-87, 41,
+                      -87.86, 41,
+                      -87.86, 43,
+                      -87, 43,
+                      -87, 41
+                      ),
+               ncol = 2,
+               byrow = TRUE))
+ box <- st_polygon(mat)
+ box <- st_geometry(box)
+ box <- st_set_crs(box, st_crs(chicago_border))
+ chicago_crop <- st_intersection(chicago_border, box)
+ permits_res <- st_intersection(permits_res, chicago_border)
+ neighborhood_crop <- st_intersection(zillow_shp, box)
+
+ ggplot() +
+     geom_point(data = permits_res,
+                aes(x = LONGITUDE, y = LATITUDE, col = WRECK),
+                size = 1.5,
+                alpha =.5,
+                shape = ".") +
+     scale_color_manual(values = c("#00B28F","#FF5416"),
+                        labels = c("Construction", "Demolition")) +
+   theme_classic() +
+   coord_sf(datum=NA) +
+   labs(x = NULL,
+         y = NULL,
+         title = "New Residential Construction Primarily in North East, \nDemolition in South and West",
+         #subtitle = "Building Permits for Residential Construction and Demolition: 2006 - 2018",
+         caption = "Data From City of Chicago Data Portal",
+         col = NULL) +
+     theme_custom +
+     theme(axis.line = element_blank(),
+     axis.text.x = element_blank(),
+     axis.text.y = element_blank(),
+     axis.ticks = element_blank(),
+     axis.title.x = element_blank(),
+     axis.title.y = element_blank(),
+     panel.grid.major = element_blank(),
+     panel.grid.minor = element_blank(),
+     plot.title = element_text(hjust = .5),
+     legend.position = c(.95, .55))  +
+     guides(color = guide_legend(override.aes = list(size = 1, shape = 16, alpha = .6)))
+```
+
+The final plot shows residential construction and demolition permit frequency over time, split into multi-family vs single-family categories. Annual permit rates drop sharply during the recession years, and although demolition numbers soon increase above pre-recession levels, construction numbers do not. We also see across time, most demolitions are of single-family homes.
+```{r Diverging Bar Plot, message=F, warning=F}
+ YEAR <- rep(seq(2006, 2018), 2)
+ SFR <- rep(NA, 26)
+ BUILD <- c(rep(TRUE, 13), rep(FALSE, 13))
+ count <- rep(150, 26)
+ temp <- data.frame(YEAR, SFR, BUILD, count)
+
+ test<- permits_res %>%
+   group_by(YEAR, SFR, BUILD) %>%
+   summarize(count = n()) %>%
+   bind_rows(temp) %>%
+  mutate(count = ifelse(BUILD ==1, count, -count))
+
+ test$geometry <- NULL
+
+  ggplot(test, aes(x=YEAR, y=count, fill=SFR)) +
+   geom_bar(stat="identity", alpha = 0.6) +
+   coord_flip() +
+   scale_x_reverse() +
+   theme_classic() +
+   scale_fill_manual(breaks = c("TRUE", "FALSE", "NA"),
+                     values = c("#FF5416", "#00B28F"),
+                     labels = c("Single-Family", "Multi-Family", "")) +
+   #scale_x_continuous(breaks = c(2006:2018)) +
+   scale_y_continuous(breaks = c(-1150, -650, 650, 1150, 1650, 2150),
+                      labels = c("1000", "500", "500", "1000",
+                                 "1500", "2000")) +
+     labs(y = "Number of Permits",
+         title = "Post-Recession: More Residential Demolition, Less Construction",
+         subtitle = "Building Permits for Residential Construction and Demolition: 2006 - 2018",
+         caption = "Data From City of Chicago Data Portal",
+         fill = NULL) +
+      annotate("text", label="Demolition", x=2004.5, y=-750, size=3.5, family="Segoe UI Semibold") +
+      annotate("text", label="Construction", x=2004.5, y=750, size=3.5, family="Segoe UI Semibold") +
+      annotate("text", label="Year", x=2004.5, y=0, size=3, family="Segoe UI Semibold") +
+         annotate("text", label="2006", x=2006, y=0, size=3, family="Segoe UI Light") +
+         annotate("text", label="2008", x=2008, y=0, size=3, family="Segoe UI Light") +
+         annotate("text", label="2010", x=2010, y=0, size=3, family="Segoe UI Light") +
+         annotate("text", label="2012", x=2012, y=0, size=3, family="Segoe UI Light") +
+         annotate("text", label="2014", x=2014, y=0, size=3, family="Segoe UI Light") +
+         annotate("text", label="2016", x=2016, y=0, size=3, family="Segoe UI Light") +
+         annotate("text", label="2018", x=2018, y=0, size=3, family="Segoe UI Light") +
+        theme_custom +
+     theme(axis.line.y = element_blank(),
+           axis.ticks.y = element_blank(),
+           axis.text.y = element_blank(),
+           axis.title.y = element_blank(),
+           axis.title.x = element_text(hjust = 0.285),
+           panel.grid.major = element_blank(),
+           panel.grid.minor = element_blank(),
+           legend.position = c(.8, .2))
+```
+
